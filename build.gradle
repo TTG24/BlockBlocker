@@ -1,0 +1,60 @@
+plugins {
+    id 'java'
+    id 'com.gradleup.shadow' version '9.6.1'
+}
+
+group = 'dev.blockblocker'
+version = '1.0.0'
+
+base.archivesName.set('BlockBlocker')
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven { url 'https://repo.papermc.io/repository/maven-public/' }
+    maven { url 'https://repo.enginehub.org/repo/' }
+    maven { url 'https://repo.codemc.io/repository/maven-releases/' }
+}
+
+dependencies {
+    compileOnly 'io.papermc.paper:paper-api:26.3.build.194-stable'
+    // FAWE provides the com.sk89q.worldedit API (selections). Server supplies it at runtime.
+    compileOnly('com.fastasyncworldedit:FastAsyncWorldEdit-Core:2.16.1') {
+        exclude group: 'org.yaml'
+    }
+    compileOnly('com.fastasyncworldedit:FastAsyncWorldEdit-Bukkit:2.16.1') {
+        exclude group: 'org.yaml'
+    }
+    // Bundled (shaded) into our jar - the server does NOT need PacketEvents installed. Used only for the optional
+    // client-side shulker colliders. All of its dependencies (adventure nbt/key/examination...) are bundled too; where Paper
+    // already provides a class, the server's copy is loaded first, so duplicates are harmless.
+    implementation 'com.github.retrooper:packetevents-spigot:2.14.0'
+}
+
+// Only the shaded jar (with PacketEvents bundled) is useful; skip the "-plain" one.
+jar {
+    enabled = false
+}
+
+shadowJar {
+    archiveClassifier.set('')
+    // Relocated so it can never clash with a PacketEvents plugin that is also installed on the server.
+    relocate 'com.github.retrooper.packetevents', 'dev.blockblocker.libs.packetevents.api'
+    relocate 'io.github.retrooper.packetevents', 'dev.blockblocker.libs.packetevents.impl'
+}
+
+tasks.build {
+    dependsOn tasks.shadowJar
+}
+
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('plugin.yml') {
+        expand(version: project.version)
+    }
+}

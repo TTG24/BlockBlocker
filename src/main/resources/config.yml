@@ -1,0 +1,15 @@
+# Send invisible barrier blocks to nearby players' clients (packets only - the world is never changed and only
+# cells that are really air are used). This stops the rubber-banding. If false, only the server-side push-back is used.
+# Change it and run /block reload.
+client-blocks: true
+
+# Cells that hold a partial block (fence, slab, stairs, chest, ...) use that block's own collision instead of being a
+# full-size wall. Nothing rubber-bands and the block stays visible, but an isolated post leaves gaps beside it
+# (a connected fence line is still impassable). Set false to make every cell fully solid on the server (may rubber-band there).
+respect-partial-blocks: true
+
+# EXPERIMENTAL. Sends each nearby player an invisible shulker (packets only - the server never creates an entity) in
+# every cell that holds a non-full block (fence, slab, grass, water...). The block stays visible, but the player's
+# client treats the whole cell as solid, so there is no rubber-banding and no gaps. Needs a SERVER RESTART to change
+# (not /block reload). While on, respect-partial-blocks is ignored. PacketEvents is bundled in the jar; nothing to install.
+shulker-colliders: false

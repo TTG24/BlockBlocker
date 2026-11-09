@@ -1,0 +1,19 @@
+name: BlockBlocker
+main: dev.blockblocker.BlockBlocker
+version: ${version}
+api-version: '1.21'
+description: Invisible walls from a FAWE/WorldEdit selection. Touches no blocks, items or entities.
+authors: [TTG24]
+softdepend: [FastAsyncWorldEdit, WorldEdit]
+commands:
+  block:
+    description: Create or manage invisible player barriers from your selection.
+    usage: /block <add|remove|list|tp|clear|reload>
+    aliases: [bb, blockblocker]
+permissions:
+  blockblocker.admin:
+    description: Use the /block command
+    default: op
+  blockblocker.bypass:
+    description: Walk through barriers (not given to anyone by default, even ops)
+    default: false
