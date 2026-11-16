@@ -101,6 +101,9 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 			customEditor.flushSave();
 			customEditor.clearLines();
 		}
+		for(LineView v : showLines.values())
+			v.clear();
+		showLines.clear();
 		if(clientBarriers != null)
 			clientBarriers.shutdown();
 		if(collidersWanted)
@@ -271,7 +274,6 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 	}
 
 	private static final double SHOW_RANGE = 48;
-	private static final Particle.DustOptions DUST = new Particle.DustOptions(Color.RED, 1.2f);
 	/** Players seeing outlines, with the barrier names they chose (empty = all barriers). */
 	private final Map<UUID, Set<String>> viewers = new HashMap<>();
 
@@ -301,6 +303,7 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 		if(current != null && (names.isEmpty() || current.equals(names)))
 		{
 			viewers.remove(player.getUniqueId());
+			clearShowLines(player.getUniqueId());
 			msg(sender, "Barrier outlines hidden.", NamedTextColor.YELLOW);
 			return;
 		}
@@ -311,9 +314,21 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 			msg(sender, "Showing only " + String.join(", ", names) + " (red, within " + (int) SHOW_RANGE + " blocks). Run /block show to hide.", NamedTextColor.GREEN);
 	}
 
+	/** The solid outline lines each /block show viewer sees (block displays only they can see, like the custom editor's). */
+	private final Map<UUID, LineView> showLines = new HashMap<>();
+	/** Most outline lines one player is shown at once (each is an entity on their client). */
+	private static final int SHOW_MAX_LINES = 800;
+
+	private void clearShowLines(UUID id)
+	{
+		LineView v = showLines.remove(id);
+		if(v != null)
+			v.clear();
+	}
+
 	private void drawOutlines()
 	{
-		if(viewers.isEmpty())
+		if(viewers.isEmpty() && showLines.isEmpty())
 			return;
 		long t0 = System.nanoTime();
 		try
@@ -329,6 +344,10 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 	private void drawOutlinesInner()
 	{
 		viewers.keySet().removeIf(id -> Bukkit.getPlayer(id) == null);
+		// Lines of players who stopped viewing (or left) are removed
+		for(UUID id : new ArrayList<>(showLines.keySet()))
+			if(!viewers.containsKey(id))
+				clearShowLines(id);
 		for(Map.Entry<UUID, Set<String>> view : viewers.entrySet())
 		{
 			Player p = Bukkit.getPlayer(view.getKey());
@@ -336,8 +355,11 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 				continue;
 			Set<String> only = view.getValue();
 			Location loc = p.getLocation();
+			Set<LineView.Line> lines = new java.util.LinkedHashSet<>();
 			for(Barrier b : store.barriersIn(p.getWorld().getName()))
 			{
+				if(lines.size() >= SHOW_MAX_LINES)
+					break;
 				if(!only.isEmpty() && !only.contains(b.name()))
 					continue;
 				double x0 = b.minX(), y0 = b.minY(), z0 = b.minZ(), x1 = b.maxX() + 1.0, y1 = b.maxY() + 1.0, z1 = b.maxZ() + 1.0;
@@ -346,107 +368,100 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 						|| loc.getY() < y0 - SHOW_RANGE || loc.getY() > y1 + SHOW_RANGE)
 					continue;
 				if(b.footprint() != null)
-				{
-					footprintOutline(p, b);
-					continue;
-				}
-				if(b.volume() != null)
-				{
-					volumeOutline(p, b);
-					continue;
-				}
-				for(double y : new double[]{y0, y1})
-					for(double z : new double[]{z0, z1})
-						edge(p, x0, y, z, x1, y, z);
-				for(double x : new double[]{x0, x1})
-					for(double z : new double[]{z0, z1})
-						edge(p, x, y0, z, x, y1, z);
-				for(double x : new double[]{x0, x1})
-					for(double y : new double[]{y0, y1})
-						edge(p, x, y, z0, x, y, z1);
+					footprintOutline(lines, loc, b);
+				else if(b.volume() != null)
+					volumeOutline(lines, loc, b);
+				else
+					LineView.box(lines, new double[] {x0, y0, z0, x1, y1, z1}, LineView.Style.SHOW);
 			}
+			showLines.computeIfAbsent(p.getUniqueId(), k -> new LineView(this)).show(p, lines);
 		}
 	}
 
 	/** Outlines a shaped barrier: its outer wall edges at the bottom and top, plus a vertical line at each wall corner. */
-	private void footprintOutline(Player p, Barrier b)
+	private void footprintOutline(Set<LineView.Line> out, Location l, Barrier b)
 	{
 		Footprint fp = b.footprint();
-		Location l = p.getLocation();
 		int px = l.getBlockX(), pz = l.getBlockZ(), r = (int) SHOW_RANGE;
 		double y0 = b.minY(), y1 = b.maxY() + 1.0;
 		for(int x = Math.max(b.minX(), px - r); x <= Math.min(b.maxX(), px + r); x++)
 			for(int z = Math.max(b.minZ(), pz - r); z <= Math.min(b.maxZ(), pz + r); z++)
 			{
+				if(out.size() >= SHOW_MAX_LINES)
+					return;
 				if(!fp.contains(x, z))
 					continue;
 				if(!fp.contains(x, z - 1)) // wall on the north side
-					wallEdge(p, x, z, x + 1, z, y0, y1);
+					wallEdge(out, x, z, x + 1, z, y0, y1);
 				if(!fp.contains(x, z + 1)) // south
-					wallEdge(p, x, z + 1, x + 1, z + 1, y0, y1);
+					wallEdge(out, x, z + 1, x + 1, z + 1, y0, y1);
 				if(!fp.contains(x - 1, z)) // west
-					wallEdge(p, x, z, x, z + 1, y0, y1);
+					wallEdge(out, x, z, x, z + 1, y0, y1);
 				if(!fp.contains(x + 1, z)) // east
-					wallEdge(p, x + 1, z, x + 1, z + 1, y0, y1);
+					wallEdge(out, x + 1, z, x + 1, z + 1, y0, y1);
 			}
 	}
 
-	/** Free-form shapes: one dot at the middle of every exposed face near the viewer (capped so it can't flood the client). */
-	private void volumeOutline(Player p, Barrier b)
+	/** Free-form shapes: the edges of every exposed cell face near the viewer (capped so it can't flood the client). */
+	private void volumeOutline(Set<LineView.Line> out, Location l, Barrier b)
 	{
-		final int r = 24, cap = 1500;
-		Location l = p.getLocation();
-		int px = l.getBlockX(), py = l.getBlockY(), pz = l.getBlockZ(), drawn = 0;
+		final int r = 24;
+		int px = l.getBlockX(), py = l.getBlockY(), pz = l.getBlockZ();
 		for(int x = Math.max(b.minX(), px - r); x <= Math.min(b.maxX(), px + r); x++)
 			for(int z = Math.max(b.minZ(), pz - r); z <= Math.min(b.maxZ(), pz + r); z++)
 				for(int y = Math.max(b.minY(), py - r); y <= Math.min(b.maxY(), py + r); y++)
 				{
+					if(out.size() >= SHOW_MAX_LINES)
+						return;
 					if(!b.contains(x, y, z))
 						continue;
 					if(!b.contains(x + 1, y, z))
-						drawn += dot(p, x + 1.0, y + 0.5, z + 0.5);
+						face(out, x + 1, y, z, x + 1, y + 1, z + 1);
 					if(!b.contains(x - 1, y, z))
-						drawn += dot(p, x, y + 0.5, z + 0.5);
+						face(out, x, y, z, x, y + 1, z + 1);
 					if(!b.contains(x, y + 1, z))
-						drawn += dot(p, x + 0.5, y + 1.0, z + 0.5);
+						face(out, x, y + 1, z, x + 1, y + 1, z + 1);
 					if(!b.contains(x, y - 1, z))
-						drawn += dot(p, x + 0.5, y, z + 0.5);
+						face(out, x, y, z, x + 1, y, z + 1);
 					if(!b.contains(x, y, z + 1))
-						drawn += dot(p, x + 0.5, y + 0.5, z + 1.0);
+						face(out, x, y, z + 1, x + 1, y + 1, z + 1);
 					if(!b.contains(x, y, z - 1))
-						drawn += dot(p, x + 0.5, y + 0.5, z);
-					if(drawn >= cap)
-						return;
+						face(out, x, y, z, x + 1, y + 1, z);
 				}
 	}
 
-	private int dot(Player p, double x, double y, double z)
+	/** The 4 edges of a flat, axis-aligned square (shared edges are only added once). */
+	private static void face(Set<LineView.Line> out, double x0, double y0, double z0, double x1, double y1, double z1)
 	{
-		p.spawnParticle(Particle.DUST, x, y, z, 1, 0, 0, 0, 0, DUST);
-		return 1;
-	}
-
-	private void wallEdge(Player p, double xa, double za, double xb, double zb, double y0, double y1)
-	{
-		edge(p, xa, y0, za, xb, y0, zb);
-		edge(p, xa, y1, za, xb, y1, zb);
-		edge(p, xa, y0, za, xa, y1, za);
-	}
-
-	/** Particles along one axis-aligned edge, only the part near the viewer. */
-	private void edge(Player p, double x0, double y0, double z0, double x1, double y1, double z1)
-	{
-		Location l = p.getLocation();
-		double len = Math.max(x1 - x0, Math.max(y1 - y0, z1 - z0));
-		double step = 0.5;
-		double rangeSq = SHOW_RANGE * SHOW_RANGE;
-		for(double t = 0; t <= len + 1.0E-9; t += step)
+		var s = LineView.Style.SHOW;
+		if(x0 == x1) // flat on x
 		{
-			double x = x0 + Math.min(t, x1 - x0), y = y0 + Math.min(t, y1 - y0), z = z0 + Math.min(t, z1 - z0);
-			double dx = x - l.getX(), dy = y - l.getY(), dz = z - l.getZ();
-			if(dx * dx + dy * dy + dz * dz <= rangeSq)
-				p.spawnParticle(Particle.DUST, x, y, z, 1, 0, 0, 0, 0, DUST);
+			out.add(LineView.Line.of(x0, y0, z0, x0, y1, z0, s));
+			out.add(LineView.Line.of(x0, y0, z1, x0, y1, z1, s));
+			out.add(LineView.Line.of(x0, y0, z0, x0, y0, z1, s));
+			out.add(LineView.Line.of(x0, y1, z0, x0, y1, z1, s));
 		}
+		else if(y0 == y1) // flat on y
+		{
+			out.add(LineView.Line.of(x0, y0, z0, x1, y0, z0, s));
+			out.add(LineView.Line.of(x0, y0, z1, x1, y0, z1, s));
+			out.add(LineView.Line.of(x0, y0, z0, x0, y0, z1, s));
+			out.add(LineView.Line.of(x1, y0, z0, x1, y0, z1, s));
+		}
+		else // flat on z
+		{
+			out.add(LineView.Line.of(x0, y0, z0, x1, y0, z0, s));
+			out.add(LineView.Line.of(x0, y1, z0, x1, y1, z0, s));
+			out.add(LineView.Line.of(x0, y0, z0, x0, y1, z0, s));
+			out.add(LineView.Line.of(x1, y0, z0, x1, y1, z0, s));
+		}
+	}
+
+	private static void wallEdge(Set<LineView.Line> out, double xa, double za, double xb, double zb, double y0, double y1)
+	{
+		out.add(LineView.Line.of(xa, y0, za, xb, y0, zb, LineView.Style.SHOW));
+		out.add(LineView.Line.of(xa, y1, za, xb, y1, zb, LineView.Style.SHOW));
+		out.add(LineView.Line.of(xa, y0, za, xa, y1, za, LineView.Style.SHOW));
 	}
 
 	private void saveStore()

@@ -32,7 +32,9 @@ final class LineView
 		CUBE(Material.MAGENTA_CONCRETE, 0.018f, Color.fromRGB(255, 60, 220)),
 		GRID(Material.LIGHT_BLUE_CONCRETE, 0.008f, Color.fromRGB(90, 170, 255)),
 		PREVIEW(Material.LIME_CONCRETE, 0.025f, Color.fromRGB(60, 255, 90)),
-		REMOVE(Material.RED_CONCRETE, 0.03f, Color.fromRGB(255, 40, 40));
+		REMOVE(Material.RED_CONCRETE, 0.03f, Color.fromRGB(255, 40, 40)),
+		/** /block show outlines: bright red. */
+		SHOW(Material.REDSTONE_BLOCK, 0.025f, Color.fromRGB(255, 0, 0));
 
 		final BlockData block;
 		final float thickness;
