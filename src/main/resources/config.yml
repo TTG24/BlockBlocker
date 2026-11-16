@@ -134,3 +134,9 @@ push-fill-cell: false
 # client treats the whole cell as solid, so there is no rubber-banding and no gaps. Needs a SERVER RESTART to change
 # (not /block reload). While on, respect-partial-blocks is ignored. PacketEvents is bundled in the jar; nothing to install.
 shulker-colliders: false
+
+# Worlds (name starts with any of these) where BlockBlocker does not plan mobs' routes around barriers, because another
+# plugin already does it there. MinecraftZombies plans its zombies' routes itself (barriers included) in its arena copies.
+# Mobs there are still blocked by barriers; only the route planning is left to MZ.
+no-route-planning-worlds:
+- mz_instance_

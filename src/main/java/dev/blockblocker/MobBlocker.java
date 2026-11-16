@@ -58,6 +58,9 @@ final class MobBlocker implements Listener
 		boolean cutShort;
 		/** Minecraft would not walk it along (it stands where its own pathfinder cannot start): steered directly instead. */
 		boolean direct;
+		/** The node it was last sent to, and when: it is only sent again when that changes, or now and then. */
+		int sentAim = -1;
+		long sentTick;
 	}
 
 	private record Route(List<int[]> nodes, boolean full, boolean cutShort) {}
@@ -70,6 +73,35 @@ final class MobBlocker implements Listener
 	private int task = -1;
 	private long budgetTick = -1;
 	private int searchesLeft;
+	/** Minecraft path searches this tick (each one is costly): limited like the route searches. */
+	private static final int FIND_PATHS_PER_TICK = 6;
+	private long findPathTick = -1;
+	private int findPathsLeft;
+	/** Worlds (name prefixes) whose mobs another plugin already routes around barriers: no route planning there. */
+	private List<String> noPlanWorlds = List.of();
+
+	/** A Minecraft path search, or null when this tick's searches are used up. */
+	private Pathfinder.PathResult findPathBudgeted(Mob mob, Location goal)
+	{
+		long tick = Bukkit.getCurrentTick();
+		if(findPathTick != tick)
+		{
+			findPathTick = tick;
+			findPathsLeft = FIND_PATHS_PER_TICK;
+		}
+		if(findPathsLeft <= 0)
+			return null;
+		findPathsLeft--;
+		return mob.getPathfinder().findPath(goal);
+	}
+
+	private boolean planningOff(World world)
+	{
+		for(String prefix : noPlanWorlds)
+			if(world.getName().startsWith(prefix))
+				return true;
+		return false;
+	}
 
 	MobBlocker(JavaPlugin plugin, BarrierStore store)
 	{
@@ -88,6 +120,8 @@ final class MobBlocker implements Listener
 				fullForMobs.add(t.trim().toUpperCase(java.util.Locale.ROOT));
 		if(!plugin.getConfig().isSet("mob-full-blocks"))
 			fullForMobs.add("BARS");
+		noPlanWorlds = plugin.getConfig().isSet("no-route-planning-worlds")
+				? List.copyOf(plugin.getConfig().getStringList("no-route-planning-worlds")) : List.of("mz_instance_");
 
 		Bukkit.getPluginManager().registerEvents(this, plugin);
 		task = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 1L, 1L).getTaskId();
@@ -384,6 +418,10 @@ final class MobBlocker implements Listener
 		{
 			if(!store.hasBarriersIn(world.getName()))
 				continue;
+			// MZ arena copies: MZ plans its zombies' routes itself (barriers included). Planning them here too made both
+			// plugins steer the same zombies, and cost half the server's time with a crowd of them. They are still blocked.
+			if(planningOff(world))
+				continue;
 			for(Mob mob : world.getEntitiesByClass(Mob.class))
 			{
 				UUID id = mob.getUniqueId();
@@ -527,6 +565,8 @@ final class MobBlocker implements Listener
 	/** Plans a route around barriers if the mob's own route goes through one. */
 	private void considerPlanning(Mob mob, long tick)
 	{
+		if(planningOff(mob.getWorld()))
+			return;
 		Long until = failedUntil.get(mob.getUniqueId());
 		if(until != null && until > tick)
 			return;
@@ -535,8 +575,12 @@ final class MobBlocker implements Listener
 			return;
 		Pathfinder.PathResult path = mob.getPathfinder().getCurrentPath();
 		if(path == null)
-			path = mob.getPathfinder().findPath(goal);
-		if(path != null && !crosses(mob.getWorld(), path))
+		{
+			path = findPathBudgeted(mob, goal);
+			if(path == null)
+				return; // no search left this tick: looked at again shortly
+		}
+		if(!crosses(mob.getWorld(), path))
 			return;
 		plan(mob, goal, tick);
 	}
@@ -564,6 +608,8 @@ final class MobBlocker implements Listener
 	/** @return false when this tick's search budget is used up (nothing changed; try again next tick) */
 	private boolean plan(Mob mob, Location goal, long tick)
 	{
+		if(planningOff(mob.getWorld()))
+			return true;
 		if(budgetTick != tick)
 		{
 			budgetTick = tick;
@@ -609,14 +655,14 @@ final class MobBlocker implements Listener
 		if(goal.distanceSquared(plan.goal) > 16 || tick - plan.madeTick > (plan.full ? 60 : 20))
 		{
 			// Is the mob's own route clear now? Then it needs no help.
-			Pathfinder.PathResult own = mob.getPathfinder().findPath(goal);
+			Pathfinder.PathResult own = findPathBudgeted(mob, goal);
 			if(own != null && own.canReachFinalPoint() && !crosses(mob.getWorld(), own))
 			{
 				plans.remove(mob.getUniqueId());
 				return;
 			}
-			// Plan again; the old plan stays in use until there is a new one
-			if(plan(mob, goal, tick))
+			// Plan again; the old plan stays in use until there is a new one (no search left: keep following meanwhile)
+			if(own != null && plan(mob, goal, tick))
 				return;
 		}
 		while(plan.index < plan.nodes.size())
@@ -693,7 +739,18 @@ final class MobBlocker implements Listener
 		int[] n = plan.nodes.get(aim);
 		// Minecraft's pathfinder cannot start from inside a block's space (a mob on a barrier piece right against iron bars
 		// has its centre in the bars' block), so it then refuses to walk the mob anywhere. Steer it by hand in that case.
-		if(plan.direct || !mob.getPathfinder().moveTo(new Location(at.getWorld(), n[0] + 0.5, n[1], n[2] + 0.5), 1.0))
+		if(plan.direct)
+		{
+			steerTo(mob, plan.nodes.get(plan.index));
+			return;
+		}
+		// Sent again only when it aims at a new node, has lost its path, or now and then: every moveTo is a full path
+		// search, and this used to run every tick for every mob on a route
+		if(aim == plan.sentAim && mob.getPathfinder().hasPath() && tick - plan.sentTick < 20)
+			return;
+		plan.sentAim = aim;
+		plan.sentTick = tick;
+		if(!mob.getPathfinder().moveTo(new Location(at.getWorld(), n[0] + 0.5, n[1], n[2] + 0.5), 1.0))
 		{
 			plan.direct = true;
 			steerTo(mob, plan.nodes.get(plan.index));
