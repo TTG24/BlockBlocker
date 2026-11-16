@@ -1117,7 +1117,11 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 				.append(Component.text("  "))
 				.append(Component.text("[Delete]", NamedTextColor.DARK_RED)
 						.hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(Component.text("Delete this barrier (asks first)", NamedTextColor.GRAY)))
-						.clickEvent(ClickEvent.callback(a -> askDelete(player, name)))));
+						.clickEvent(ClickEvent.callback(a -> askDelete(player, name))))
+				.append(Component.text("  "))
+				.append(Component.text("[Outline]", NamedTextColor.RED)
+						.hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(Component.text("Show this barrier's red outline (click again to hide)", NamedTextColor.GRAY)))
+						.clickEvent(ClickEvent.runCommand("/block show " + name))));
 		if(store.getCustom(b) != null)
 		{
 			// Custom barriers can be edited straight from here (same command as /block custom edit <name>)
