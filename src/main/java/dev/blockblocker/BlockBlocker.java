@@ -1146,11 +1146,11 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 		if(!shaped)
 			return;
 		// Auto-connect arms per side: green = connects that way, gray = switched off. Click to flip.
-		java.util.Set<BlockFace> off = store.noConnect(b);
+		java.util.Set<BlockFace> noConn = store.noConnect(b);
 		Component row = Component.text("   Connect: ", NamedTextColor.GRAY);
 		for(BlockFace f : new BlockFace[] {BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST})
 		{
-			boolean on = !off.contains(f);
+			boolean on = !noConn.contains(f);
 			String side = f.name().toLowerCase(Locale.ROOT);
 			row = row.append(Component.text("[" + Character.toUpperCase(side.charAt(0)) + side.substring(1) + "]", on ? NamedTextColor.GREEN : NamedTextColor.DARK_GRAY)
 					.hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(Component.text((on ? "Connects " : "Doesn't connect ") + side + ". Click to " + (on ? "stop" : "allow") + " it.", NamedTextColor.GRAY)))
@@ -1357,8 +1357,8 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 				Barrier b = sender instanceof Player p ? store.find(p.getWorld().getName(), args[1]) : store.get(args[1]);
 				if(b != null)
 				{
-					java.util.Set<BlockFace> off = store.noConnect(b);
-					msg(sender, "'" + b.name() + "' doesn't connect: " + (off.isEmpty() ? "nothing switched off" : off.stream().map(f -> f.name().toLowerCase(Locale.ROOT)).toList()) + ".", NamedTextColor.YELLOW);
+					java.util.Set<BlockFace> noConn = store.noConnect(b);
+					msg(sender, "'" + b.name() + "' doesn't connect: " + (noConn.isEmpty() ? "nothing switched off" : noConn.stream().map(f -> f.name().toLowerCase(Locale.ROOT)).toList()) + ".", NamedTextColor.YELLOW);
 					return;
 				}
 			}
