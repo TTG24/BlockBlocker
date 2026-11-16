@@ -1145,7 +1145,13 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 				.append(Component.text("  (sneak + right-click with the " + (pickItem == null ? "pick item" : pickItem.name().toLowerCase(Locale.ROOT)) + " to swap)", NamedTextColor.DARK_GRAY)));
 		if(!shaped)
 			return;
-		// Auto-connect arms per side: green = connects that way, gray = switched off. Click to flip.
+		sendConnectRow(player, b);
+	}
+
+	/** The bone menu's connect buttons: green = connects that way, gray = switched off. Click to flip. */
+	private void sendConnectRow(Player player, Barrier b)
+	{
+		String name = b.name();
 		java.util.Set<BlockFace> noConn = store.noConnect(b);
 		Component row = Component.text("   Connect: ", NamedTextColor.GRAY);
 		for(BlockFace f : new BlockFace[] {BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST})
@@ -1414,7 +1420,9 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 		if(clientBarriers != null)
 			clientBarriers.refreshVisibility();
 		String sideName = side.name().toLowerCase(Locale.ROOT);
-		msg(sender, "'" + b.name() + "' " + (on ? "connects " + sideName + " again." : "no longer auto-connects " + sideName + "."), NamedTextColor.GREEN);
+		msg(sender, "'" + b.name() + "' " + (on ? "connects " + sideName + " again." : "no longer connects " + sideName + "."), NamedTextColor.GREEN);
+		if(sender instanceof Player p && store.hasShapes(b) && store.getCustom(b) == null && store.getEdge(b) == null)
+			sendConnectRow(p, b); // the buttons again, showing the new state
 		if(store.getCustom(b) != null || store.getEdge(b) != null || !store.hasShapes(b))
 			msg(sender, "(It isn't a follow-shape barrier, so this has no effect on it.)", NamedTextColor.GRAY);
 	}

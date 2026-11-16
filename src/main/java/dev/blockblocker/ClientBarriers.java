@@ -536,7 +536,7 @@ public class ClientBarriers implements Listener
 								// there is one for this block (panes, fences, walls); anything else (doors...) uses tiny shulkers.
 								Block src = store.sourceFor(b, block);
 								// (never a fake block over a real one: the fan / plant stays visible, shulkers instead)
-								BlockData fd = shapeFake && src != null && plainAir ? fakeFor(src, store.connections(b, block)) : null;
+								BlockData fd = shapeFake && src != null && plainAir ? fakeFor(src, store.connections(b, block), store.noConnect(b)) : null;
 								if(fd != null)
 								{
 									if(!touchesShape(x, y, z, store.shapeIn(b, block), body))
@@ -766,7 +766,7 @@ public class ClientBarriers implements Listener
 	 * The fake block that stands in for the thin block below an air cell: same collision shape, same connections, but a block
 	 * the resource pack draws as nothing (see config fake-pane / fake-fence / fake-wall). Null if there is none.
 	 */
-	private BlockData fakeFor(Block source, List<BlockFace> connect)
+	private BlockData fakeFor(Block source, List<BlockFace> connect, java.util.Set<BlockFace> off)
 	{
 		if(source == null)
 			return null;
@@ -803,13 +803,14 @@ public class ClientBarriers implements Listener
 		if(fake instanceof org.bukkit.block.data.MultipleFacing df && src instanceof org.bukkit.block.data.MultipleFacing sf)
 		{
 			for(BlockFace f : df.getAllowedFaces())
-				df.setFace(f, sf.hasFace(f) || connect.contains(f));
+				df.setFace(f, (sf.hasFace(f) || connect.contains(f)) && !off.contains(f));
 		}
 		else if(fake instanceof org.bukkit.block.data.type.Wall dw && src instanceof org.bukkit.block.data.type.Wall sw)
 		{
 			dw.setUp(sw.isUp());
 			for(BlockFace f : List.of(BlockFace.NORTH, BlockFace.EAST, BlockFace.SOUTH, BlockFace.WEST))
-				dw.setHeight(f, sw.getHeight(f) == org.bukkit.block.data.type.Wall.Height.NONE && connect.contains(f) ? org.bukkit.block.data.type.Wall.Height.LOW : sw.getHeight(f));
+				dw.setHeight(f, off.contains(f) ? org.bukkit.block.data.type.Wall.Height.NONE
+						: sw.getHeight(f) == org.bukkit.block.data.type.Wall.Height.NONE && connect.contains(f) ? org.bukkit.block.data.type.Wall.Height.LOW : sw.getHeight(f));
 		}
 		if(fake instanceof org.bukkit.block.data.Waterlogged wl)
 			wl.setWaterlogged(false);

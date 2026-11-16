@@ -527,6 +527,38 @@ public class BarrierStore
 		return set == null || !set.contains(side);
 	}
 
+	/**
+	 * A copied shape with its arms toward the switched-off sides cut back to the post (the bars' own arms copied into the air
+	 * above them, not only the ones this plugin adds). Footprints {x0, z0, x1, z1} in sixteenths; null stays null.
+	 */
+	private List<int[]> trimSides(Barrier b, List<int[]> fp)
+	{
+		java.util.EnumSet<BlockFace> off = noConnect.get(key(b.world(), b.name()));
+		if(fp == null || off == null || off.isEmpty())
+			return fp;
+		// The post: a square in the middle as wide as the thinnest footprint covering the middle (bars 2/16; a straight line of
+		// bars is one long box, its width is the post), else 2/16
+		int w = 16;
+		for(int[] f : fp)
+			if(f[0] <= 8 && f[2] >= 8 && f[1] <= 8 && f[3] >= 8)
+				w = Math.min(w, Math.min(f[2] - f[0], f[3] - f[1]));
+		if(w >= 16)
+			w = 2;
+		int px0 = 8 - w / 2, pz0 = px0, px1 = px0 + w, pz1 = px1;
+		List<int[]> out = new ArrayList<>(fp.size());
+		for(int[] f : fp)
+		{
+			int x0 = f[0], z0 = f[1], x1 = f[2], z1 = f[3];
+			if(off.contains(BlockFace.NORTH)) z0 = Math.max(z0, Math.min(z1, pz0));
+			if(off.contains(BlockFace.SOUTH)) z1 = Math.min(z1, Math.max(z0, pz1));
+			if(off.contains(BlockFace.WEST)) x0 = Math.max(x0, Math.min(x1, px0));
+			if(off.contains(BlockFace.EAST)) x1 = Math.min(x1, Math.max(x0, px1));
+			if(x1 > x0 && z1 > z0)
+				out.add(new int[] {x0, z0, x1, z1});
+		}
+		return out.isEmpty() ? List.of(new int[] {px0, pz0, px1, pz1}) : out;
+	}
+
 	public void setShapes(Barrier b, boolean on)
 	{
 		version++; // players near it get its new shape at once
@@ -835,7 +867,7 @@ public class BarrierStore
 	 */
 	public List<int[]> shapeIn(Barrier barrier, Block air)
 	{
-		List<int[]> base = shapeAbove(barrier, air);
+		List<int[]> base = trimSides(barrier, shapeAbove(barrier, air));
 		if(base == null)
 		{
 			// Nothing to copy, but in a line of bars/fences: a thin piece joining it up (as thick as their arms)
@@ -1272,7 +1304,7 @@ public class BarrierStore
 		if(!hasShapes(barrier) || !isThin(thin))
 			return List.of();
 		List<int[]> out = new ArrayList<>(bridgeArms(barrier, thin));
-		List<int[]> under = stackFootprints(thin.getRelative(0, -1, 0), -1, true);
+		List<int[]> under = trimSides(barrier, stackFootprints(thin.getRelative(0, -1, 0), -1, true));
 		if(under != null)
 		{
 			List<int[]> own = footprints(thin);
