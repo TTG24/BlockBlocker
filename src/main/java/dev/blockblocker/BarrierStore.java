@@ -1214,6 +1214,17 @@ public class BarrierStore
 	 * True if the straight segment a -> b passes through the real shape of a barrier: each cell along it is checked against
 	 * its exact boxes, so a thin piece at the edge of a cell blocks only the moves that really cross it.
 	 */
+	/**
+	 * Quick test (no allocation) whether the segment's own bounds overlap the box at all. Almost every box is far from the
+	 * segment, so this skips the costly ray trace for them (zombie route planning asks this for every step it tries).
+	 */
+	private static boolean nearSegment(BoundingBox box, org.bukkit.util.Vector a, org.bukkit.util.Vector b)
+	{
+		return Math.max(a.getX(), b.getX()) >= box.getMinX() && Math.min(a.getX(), b.getX()) <= box.getMaxX()
+				&& Math.max(a.getY(), b.getY()) >= box.getMinY() && Math.min(a.getY(), b.getY()) <= box.getMaxY()
+				&& Math.max(a.getZ(), b.getZ()) >= box.getMinZ() && Math.min(a.getZ(), b.getZ()) <= box.getMaxZ();
+	}
+
 	public boolean segmentHits(World world, org.bukkit.util.Vector a, org.bukkit.util.Vector b)
 	{
 		org.bukkit.util.Vector dir = b.clone().subtract(a);
@@ -1223,7 +1234,7 @@ public class BarrierStore
 		dir.multiply(1.0 / len);
 		for(CachedBox c : byWorld.getOrDefault(world.getName(), NONE))
 		{
-			if(!c.box().contains(a) && c.box().rayTrace(a, dir, len) == null)
+			if(!nearSegment(c.box(), a, b) || !c.box().contains(a) && c.box().rayTrace(a, dir, len) == null)
 				continue;
 			Barrier barrier = c.barrier();
 			java.util.Set<Long> seen = new java.util.HashSet<>();
@@ -1251,7 +1262,7 @@ public class BarrierStore
 		dir.multiply(1.0 / len);
 		for(CachedBox c : byWorld.getOrDefault(world, NONE))
 		{
-			if(!c.box().contains(a) && c.box().rayTrace(a, dir, len) == null)
+			if(!nearSegment(c.box(), a, b) || !c.box().contains(a) && c.box().rayTrace(a, dir, len) == null)
 				continue;
 			if(!c.barrier().isShaped())
 				return true;
