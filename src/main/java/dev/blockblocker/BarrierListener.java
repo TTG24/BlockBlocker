@@ -31,6 +31,19 @@ public class BarrierListener implements Listener
 	{
 		if(!event.hasChangedPosition())
 			return;
+		long t0 = System.nanoTime();
+		try
+		{
+			move(event);
+		}
+		finally
+		{
+			Perf.add(Perf.MOVE, t0);
+		}
+	}
+
+	private void move(PlayerMoveEvent event)
+	{
 
 		Location from = event.getFrom();
 		Location to = event.getTo();
@@ -68,7 +81,7 @@ public class BarrierListener implements Listener
 			for(int i = 0; i < 3; i++)
 				missed += Math.abs(target[i] - reached[i]);
 			if(missed == 0)
-				return; // fully legal move: leave it alone
+					return; // fully legal move: leave it alone
 			if(missed < bestMissed)
 			{
 				bestMissed = missed;

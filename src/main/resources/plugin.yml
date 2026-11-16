@@ -4,7 +4,7 @@ version: ${version}
 api-version: '1.21'
 description: Invisible walls from a FAWE/WorldEdit selection. Touches no blocks, items or entities.
 authors: [TTG24]
-softdepend: [FastAsyncWorldEdit, WorldEdit]
+softdepend: [FastAsyncWorldEdit, WorldEdit, MinecraftZombies, GrimAC]
 commands:
   block:
     description: Create or manage invisible player barriers from your selection.

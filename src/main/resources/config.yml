@@ -8,6 +8,127 @@ client-blocks: true
 # (a connected fence line is still impassable). Set false to make every cell fully solid on the server (may rubber-band there).
 respect-partial-blocks: true
 
+# How long "/block off <name>" keeps a barrier switched off before it switches itself back on. 0 = until /block on.
+# You can also give seconds per command: /block off 3 30. Switched-off barriers are never saved: a restart or
+# /block reload turns them all back on.
+disable-seconds: 60
+
+# Right-clicking while holding this item works like /block pick (shows the name of the barrier you look at, with
+# switch off/on buttons). Only for players with the blockblocker permission; the click does nothing else.
+# Not used while editing a custom barrier. "none" = off.
+pick-item: BONE
+
+# GrimAC (anti-cheat) doesn't model BlockBlocker's small invisible shulkers exactly, so right next to them it can think a
+# player moved wrongly and pull them back (feels like lag/rubber-banding). While true, Grim's movement flags are ignored
+# only while a player is within about a block of one of those shulkers. Needs shulker-colliders on; restart to apply.
+grim-ignore-near-shulkers: true
+
+# When a player right-clicks one of the invisible barriers (the fake shulker / fake barrier block) instead of the real
+# block behind it - for example a sign that buys a gun - pass the click through to that real block, so plugins react
+# exactly as if it had been clicked directly. Needs shulker-colliders: true to catch clicks on the shulkers. Only plugin
+# reactions are passed on; vanilla actions (opening a chest, flipping a lever) are not.
+click-through: true
+
+# Give the MinecraftZombies zombie-window barriers the same client-side collision (fake barrier blocks where a broken
+# barrier is now empty; invisible shulkers on non-full barrier blocks if shulker-colliders is on). MZ keeps blocking
+# players on the server by itself; this only stops the pulled-back rubber-banding. Applies only to players who are in an
+# MZ game, in that game's world, like MZ's own rule. Needs the MinecraftZombies plugin; /block reload applies a change.
+mz-barriers: false
+
+# A fake barrier block / shulker can swallow a sword swing aimed at a creature behind it, like a window that is now
+# empty. With this on, such a swing is passed on to the creature really in the player's line of sight (within their normal
+# reach, never through a real block, never at players), as a normal attack. Needs shulker-colliders: true to see swings.
+attack-through: true
+
+# Blocks standing inside a barrier cell (the barrier's own boards, half blocks, fences, bars...) never protect a creature
+# from a swing that attack-through passes on. Ordinary blocks outside barriers still do. With this true, full solid blocks
+# inside a barrier cell (e.g. whole planks) are passed through too; set it false to let only non-full blocks through.
+attack-through-full-blocks: true
+
+# Blocks that keep their own thin vanilla collision inside a barrier (no whole-cell shulker on them), and whose exact
+# shape is copied into the AIR cells above them that are part of the barrier - so 3 iron bars plus 2 barrier cells above
+# act like 5 tall bars, and the map still looks the same. A material counts if its name equals an entry or ends with it
+# (BARS = iron/copper bars, GLASS_PANE = every pane, FENCE = every fence, WALL = cobblestone walls...). Use [] to make every
+# block in a barrier fully solid for its whole cell instead.
+# The copy is made of tiny invisible shulkers (needs shulker-colliders: true), placed exactly on the thin shape, so the
+# player's own client collides with it: no pull-back, no resource pack needed. (shape-fake-blocks below is an alternative.)
+thin-blocks:
+  - BARS
+  - GLASS_PANE
+  - FENCE
+  - WALL
+
+# true = in one barrier, the copies above/below bars, fences and walls join up with their thin neighbours (an arm as thick
+# as the post toward each side where the barrier continues with thin cells), so a selection over a row of bars is one
+# continuous thin wall with no gaps between the posts. false = each cell copies only the block below it.
+connect-shapes: true
+
+# Shape barriers (/block addshape) also copy every other block that is smaller than a full block, not only thin-blocks:
+# doors, trapdoors, slabs, stairs... Their cell keeps the block's footprint over the whole cell height (a door stays a
+# door-shaped wall; nobody can stand on a slab or closed trapdoor inside the barrier), and the air above/below copies it.
+shape-copy-partial-blocks: true
+
+# Most tiny shulkers one player is sent at a time for thin shapes and edge barriers (nearest first). Further away, the
+# server alone enforces them (can feel like a pull-back there). Raise it for big bar/fence walls, lower it if FPS suffers.
+max-shape-colliders: 2500
+
+# How closely those tiny shulkers follow a shape: the most space left between two of them along it, in sixteenths of a
+# block (0-8). Small = a smooth wall that hugs the real shape (walls, fences, doors...) but more shulkers; 8 = the old
+# dotted wall (fewest shulkers, but you can sink into the gaps and it feels bumpy).
+shape-collider-gap: 2
+
+# ALTERNATIVE to the tiny shulkers for the air above/below bars, fences and walls: invisible blocks from the resource pack.
+# Needs the BlockBlocker resource pack (resourcepack/ in the repo, or add its
+# files to your server pack). The client is sent real, invisible blocks that have the same thin collision as the bars/fence/
+# wall below (same connections), so it collides on its own and the server never has to pull anyone back. Without the pack,
+# players would SEE the fake blocks, so leave this false unless the pack is in use. Not used in push mode.
+shape-fake-blocks: false
+
+# The blocks used for it. They are drawn as nothing by the resource pack and so must NEVER be used in your maps. They must
+# have the same collision shape as what they stand in for: a pane for iron bars and glass panes, a fence, a wall.
+# If you change them, the files in the resource pack have to be renamed to match.
+fake-pane: MAGENTA_STAINED_GLASS_PANE
+fake-fence: CHERRY_FENCE
+fake-wall: RESIN_BRICK_WALL
+
+# What the copied thin shape above bars/fences/panes/walls does to players (decided by the server only).
+# "block" = the server stops players at the exact thin shape. Nothing is shown to the client, so a player pressing
+#   against it can feel a little pull-back (rubber-banding), like any server-side barrier.
+# "push"  = not solid: a player who touches it is shoved away from it, which is smooth.
+# /block reload applies it.
+shape-mode: block
+
+# Mobs (zombies, hellhounds...) are stopped at barriers like players are, and a mob stuck against one is steered around
+# its end. Nothing is placed in the world: it only changes where the mob is allowed to move. false = mobs ignore barriers.
+mobs-blocked: true
+
+# Blocks that count as a whole full block for mobs (only for mobs; players are not affected). A material counts if its name
+# ends with an entry. Iron bars are thin in Minecraft, so zombies pressed into the bars' block, where Minecraft cannot plan
+# a route from, and got stuck; as full blocks they stop at the edge and can jump onto them like any block. [] = off.
+mob-full-blocks:
+- BARS
+# Fences, walls and glass panes: a wall next to a fence (or pane) does not connect, which leaves a 0.625 wide gap between
+# the posts, wider than a zombie. As full blocks for mobs, zombies cannot squeeze into those gaps.
+- FENCE
+- _WALL
+- PANE
+
+# Log (in the console) why mobs are stopped by barriers: which barrier blocked a move or a jump, and when one hops over a
+# low barrier. At most once a second per mob. For finding where zombies get stuck; leave it false otherwise.
+mob-debug: false
+
+# How hard "push" shoves (blocks per tick of speed).
+push-strength: 0.5
+
+# In block mode: true = the air cells above the bars/fences are a plain solid cell (fake barrier block), so there is NO gap
+# anywhere above them, but the thin shape is gone there. false = the thin shape of tiny shulkers, which leaves the same
+# gaps the real bars have. Needs /block reload.
+block-fill-cell: false
+
+# In push mode: true = the whole cell above the bars pushes players out, so there is no gap between the thin pieces to
+# stand in. false = only the thin shape itself pushes (gaps beside it can be entered).
+push-fill-cell: false
+
 # EXPERIMENTAL. Sends each nearby player an invisible shulker (packets only - the server never creates an entity) in
 # every cell that holds a non-full block (fence, slab, grass, water...). The block stays visible, but the player's
 # client treats the whole cell as solid, so there is no rubber-banding and no gaps. Needs a SERVER RESTART to change

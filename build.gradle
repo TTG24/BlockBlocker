@@ -34,6 +34,8 @@ dependencies {
     // client-side shulker colliders. All of its dependencies (adventure nbt/key/examination...) are bundled too; where Paper
     // already provides a class, the server's copy is loaded first, so duplicates are harmless.
     implementation 'com.github.retrooper:packetevents-spigot:2.14.0'
+    // GrimAC API (optional at runtime): ignore Grim movement flags right next to our client-side shulkers.
+    compileOnly files('libs/grim-api.jar')
 }
 
 // Only the shaded jar (with PacketEvents bundled) is useful; skip the "-plain" one.
