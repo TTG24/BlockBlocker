@@ -1102,8 +1102,23 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 				.append(Component.text("[Delete]", NamedTextColor.DARK_RED)
 						.hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(Component.text("Delete this barrier (asks first)", NamedTextColor.GRAY)))
 						.clickEvent(ClickEvent.callback(a -> askDelete(player, name)))));
-		if(store.getCustom(b) != null || store.getEdge(b) != null)
-			return; // custom/edge barriers have their own exact shape: the blocking mode doesn't apply
+		if(store.getCustom(b) != null)
+		{
+			// Custom barriers can be edited straight from here (same command as /block custom edit <name>)
+			player.sendMessage(Component.text("   Type: ", NamedTextColor.GRAY)
+					.append(Component.text("custom", NamedTextColor.LIGHT_PURPLE))
+					.append(Component.text("  "))
+					.append(Component.text("[Edit]", NamedTextColor.GOLD)
+							.hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(Component.text("Edit this custom barrier's shape", NamedTextColor.GRAY)))
+							.clickEvent(ClickEvent.runCommand("/block custom edit " + name))));
+			return; // own exact shape: the blocking mode doesn't apply
+		}
+		if(store.getEdge(b) != null)
+		{
+			player.sendMessage(Component.text("   Type: ", NamedTextColor.GRAY).append(Component.text("edge", NamedTextColor.LIGHT_PURPLE)));
+			return;
+		}
+		player.sendMessage(Component.text("   Type: ", NamedTextColor.GRAY).append(Component.text("normal", NamedTextColor.WHITE)));
 		boolean shaped = store.hasShapes(b);
 		player.sendMessage(Component.text("   Blocking: ", NamedTextColor.GRAY)
 				.append(Component.text(shaped ? "follows shape (like addshape)" : "normal, whole blocks (like add)", NamedTextColor.YELLOW))
