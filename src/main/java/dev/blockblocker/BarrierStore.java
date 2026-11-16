@@ -92,6 +92,7 @@ public class BarrierStore
 		edges.keySet().removeIf(k -> !isTemporaryKey(k));
 		customs.keySet().removeIf(k -> !isTemporaryKey(k));
 		noShapes.removeIf(k -> !isTemporaryKey(k));
+		noConnect.keySet().removeIf(k -> !isTemporaryKey(k));
 		if(file.exists())
 		{
 			YamlConfiguration yaml = YamlConfiguration.loadConfiguration(file);
@@ -143,6 +144,19 @@ public class BarrierStore
 						customs.put(key(world, name), custom);
 					if(!s.getBoolean("shapes", true))
 						noShapes.add(key(world, name));
+					java.util.EnumSet<BlockFace> nc = java.util.EnumSet.noneOf(BlockFace.class);
+					for(String side : s.getStringList("no-connect"))
+						try
+						{
+							BlockFace f = BlockFace.valueOf(side.toUpperCase(java.util.Locale.ROOT));
+							if(java.util.List.of(SIDES).contains(f))
+								nc.add(f);
+						}
+						catch(IllegalArgumentException ignored)
+						{
+						}
+					if(!nc.isEmpty())
+						noConnect.put(key(world, name), nc);
 				}
 			}
 		}
@@ -175,6 +189,9 @@ public class BarrierStore
 			}
 			if(!hasShapes(b))
 				yaml.set(path + ".shapes", false);
+			java.util.Set<BlockFace> nc = noConnect(b);
+			if(!nc.isEmpty())
+				yaml.set(path + ".no-connect", nc.stream().map(f -> f.name().toLowerCase(java.util.Locale.ROOT)).toList());
 		}
 		yaml.save(file);
 	}
@@ -296,6 +313,7 @@ public class BarrierStore
 				edges.remove(key(toWorld, name));
 				customs.remove(key(toWorld, name));
 				noShapes.remove(key(toWorld, name));
+				noConnect.remove(key(toWorld, name));
 			}
 		Map<String, Barrier> copies = new LinkedHashMap<>();
 		for(Barrier b : barriers.values())
@@ -312,6 +330,9 @@ public class BarrierStore
 					noShapes.add(key(toWorld, b.name()));
 				else
 					noShapes.remove(key(toWorld, b.name()));
+				java.util.EnumSet<BlockFace> nc = noConnect.get(key(b.world(), b.name()));
+				if(nc != null)
+					noConnect.put(key(toWorld, b.name()), java.util.EnumSet.copyOf(nc));
 			}
 		if(copies.isEmpty())
 			temporary.remove(toWorld);
@@ -341,6 +362,7 @@ public class BarrierStore
 		edges.keySet().removeIf(k -> k.startsWith(world + "/"));
 		customs.keySet().removeIf(k -> k.startsWith(world + "/"));
 		noShapes.removeIf(k -> k.startsWith(world + "/"));
+		noConnect.keySet().removeIf(k -> k.startsWith(world + "/"));
 		disabled.removeIf(k -> k.startsWith(world + "/"));
 		if(temporary.remove(world) != null)
 			reindex();
@@ -392,6 +414,7 @@ public class BarrierStore
 			edges.remove(key(b.world(), b.name()));
 			customs.remove(key(b.world(), b.name()));
 			noShapes.remove(key(b.world(), b.name()));
+			noConnect.remove(key(b.world(), b.name()));
 			reindex();
 		}
 		return b != null;
@@ -405,6 +428,7 @@ public class BarrierStore
 			edges.remove(key(b.world(), b.name()));
 			customs.remove(key(b.world(), b.name()));
 			noShapes.remove(key(b.world(), b.name()));
+			noConnect.remove(key(b.world(), b.name()));
 		}
 		barriers.clear();
 		disabled.clear();
@@ -471,6 +495,36 @@ public class BarrierStore
 	public boolean hasShapes(Barrier b)
 	{
 		return !noShapes.contains(key(b.world(), b.name()));
+	}
+
+	/** Directions ("world/name" -> sides) a shape barrier does NOT auto-connect toward (no arms pointing that way). */
+	private final Map<String, java.util.EnumSet<BlockFace>> noConnect = new HashMap<>();
+
+	/** The sides this barrier's cells don't auto-connect toward (empty = connects every way). */
+	public java.util.Set<BlockFace> noConnect(Barrier b)
+	{
+		java.util.EnumSet<BlockFace> set = noConnect.get(key(b.world(), b.name()));
+		return set == null ? java.util.Set.of() : java.util.Collections.unmodifiableSet(set);
+	}
+
+	/** Switches auto-connecting toward one side (NORTH/SOUTH/EAST/WEST) on or off for this barrier. */
+	public void setConnect(Barrier b, BlockFace side, boolean on)
+	{
+		version++; // players near it get its new shape at once
+		String k = key(b.world(), b.name());
+		java.util.EnumSet<BlockFace> set = noConnect.computeIfAbsent(k, x -> java.util.EnumSet.noneOf(BlockFace.class));
+		if(on)
+			set.remove(side);
+		else
+			set.add(side);
+		if(set.isEmpty())
+			noConnect.remove(k);
+	}
+
+	private boolean connectsToward(Barrier b, BlockFace side)
+	{
+		java.util.EnumSet<BlockFace> set = noConnect.get(key(b.world(), b.name()));
+		return set == null || !set.contains(side);
 	}
 
 	public void setShapes(Barrier b, boolean on)
@@ -559,6 +613,8 @@ public class BarrierStore
 		int w = 0;
 		for(BlockFace f : SIDES)
 		{
+			if(!connectsToward(barrier, f))
+				continue;
 			Block end = lineEnd(barrier, air, f);
 			if(end == null)
 				continue;
@@ -759,6 +815,8 @@ public class BarrierStore
 			return out;
 		for(BlockFace f : SIDES)
 		{
+			if(!connectsToward(barrier, f))
+				continue; // switched off for this barrier (bone menu / /block connect)
 			Block n = air.getRelative(f);
 			if(!barrier.contains(n.getX(), n.getY(), n.getZ()))
 				continue;
@@ -1063,6 +1121,8 @@ public class BarrierStore
 		List<int[]> out = new ArrayList<>(2);
 		for(BlockFace f : SIDES)
 		{
+			if(!connectsToward(barrier, f))
+				continue;
 			Block n = thin.getRelative(f);
 			if(!barrier.contains(n.getX(), n.getY(), n.getZ()))
 				continue;

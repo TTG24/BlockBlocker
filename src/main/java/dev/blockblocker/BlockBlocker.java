@@ -496,6 +496,7 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 			case "add" -> add(sender, args, false);
 			case "addshape" -> add(sender, args, true);
 			case "shapes" -> shapes(sender, args);
+			case "connect" -> connect(sender, args);
 			case "remove" -> remove(sender, args);
 			case "edit" -> edit(sender, args);
 			case "edge" -> edge(sender, args);
@@ -1142,6 +1143,21 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 				.append(Component.text(" "))
 				.append(Component.text("[Follow shape]", shaped ? NamedTextColor.DARK_GRAY : NamedTextColor.WHITE).clickEvent(ClickEvent.runCommand("/block shapes " + name + " on")))
 				.append(Component.text("  (sneak + right-click with the " + (pickItem == null ? "pick item" : pickItem.name().toLowerCase(Locale.ROOT)) + " to swap)", NamedTextColor.DARK_GRAY)));
+		if(!shaped)
+			return;
+		// Auto-connect arms per side: green = connects that way, gray = switched off. Click to flip.
+		java.util.Set<BlockFace> off = store.noConnect(b);
+		Component row = Component.text("   Connect: ", NamedTextColor.GRAY);
+		for(BlockFace f : new BlockFace[] {BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST})
+		{
+			boolean on = !off.contains(f);
+			String side = f.name().toLowerCase(Locale.ROOT);
+			row = row.append(Component.text("[" + Character.toUpperCase(side.charAt(0)) + side.substring(1) + "]", on ? NamedTextColor.GREEN : NamedTextColor.DARK_GRAY)
+					.hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(Component.text((on ? "Connects " : "Doesn't connect ") + side + ". Click to " + (on ? "stop" : "allow") + " it.", NamedTextColor.GRAY)))
+					.clickEvent(ClickEvent.runCommand("/block connect " + name + " " + side + " " + (on ? "off" : "on"))))
+					.append(Component.text(" "));
+		}
+		player.sendMessage(row.append(Component.text(" (you face " + facing(player).name().toLowerCase(Locale.ROOT) + ")", NamedTextColor.DARK_GRAY)));
 	}
 
 	/** The pick report's [Delete]: asks once more, since it can't be undone. */
@@ -1298,6 +1314,7 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 			case "add", "a", "create", "set" -> "add";
 			case "addshape", "addshapes", "as" -> "addshape";
 			case "shapes", "shape" -> "shapes";
+			case "connect", "conn" -> "connect";
 			case "remove", "rm", "delete", "del" -> "remove";
 			case "edit", "e", "modify", "mod" -> "edit";
 			case "edge" -> "edge";
@@ -1317,6 +1334,89 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 			case "reload", "rl" -> "reload";
 			default -> arg.toLowerCase(Locale.ROOT);
 		};
+	}
+
+	/** The side (north/south/east/west) the player faces. */
+	private static BlockFace facing(Player player)
+	{
+		float yaw = (player.getLocation().getYaw() % 360 + 360) % 360;
+		return yaw < 45 || yaw >= 315 ? BlockFace.SOUTH : yaw < 135 ? BlockFace.WEST : yaw < 225 ? BlockFace.NORTH : BlockFace.EAST;
+	}
+
+	/**
+	 * /block connect <name> <north|south|east|west|me> [on|off]: does this follow-shape barrier auto-connect (add arms
+	 * between bars, fences, walls...) toward that side? Off removes the arms pointing that way.
+	 */
+	private void connect(CommandSender sender, String[] args)
+	{
+		String usage = "Usage: /block connect <name> <north|south|east|west|me> [on|off]";
+		if(args.length < 3)
+		{
+			if(args.length == 2)
+			{
+				Barrier b = sender instanceof Player p ? store.find(p.getWorld().getName(), args[1]) : store.get(args[1]);
+				if(b != null)
+				{
+					java.util.Set<BlockFace> off = store.noConnect(b);
+					msg(sender, "'" + b.name() + "' doesn't connect: " + (off.isEmpty() ? "nothing switched off" : off.stream().map(f -> f.name().toLowerCase(Locale.ROOT)).toList()) + ".", NamedTextColor.YELLOW);
+					return;
+				}
+			}
+			msg(sender, usage, NamedTextColor.RED);
+			return;
+		}
+		Barrier b = sender instanceof Player p ? store.find(p.getWorld().getName(), args[1]) : store.get(args[1]);
+		if(b == null)
+		{
+			msg(sender, "No barrier named '" + args[1] + "' in this world. Use /block list.", NamedTextColor.RED);
+			return;
+		}
+		String sideArg = args[2].toLowerCase(Locale.ROOT);
+		BlockFace side;
+		if(sideArg.equals("me"))
+		{
+			if(!(sender instanceof Player p))
+			{
+				msg(sender, "Only players can use 'me'.", NamedTextColor.RED);
+				return;
+			}
+			side = facing(p);
+		}
+		else
+			side = switch(sideArg)
+			{
+				case "north", "n" -> BlockFace.NORTH;
+				case "south", "s" -> BlockFace.SOUTH;
+				case "east", "e" -> BlockFace.EAST;
+				case "west", "w" -> BlockFace.WEST;
+				default -> null;
+			};
+		if(side == null)
+		{
+			msg(sender, usage, NamedTextColor.RED);
+			return;
+		}
+		boolean on;
+		if(args.length >= 4)
+		{
+			String v = args[3].toLowerCase(Locale.ROOT);
+			if(!v.equals("on") && !v.equals("off"))
+			{
+				msg(sender, usage, NamedTextColor.RED);
+				return;
+			}
+			on = v.equals("on");
+		}
+		else
+			on = store.noConnect(b).contains(side); // no on/off: flip it
+		store.setConnect(b, side, on);
+		saveStore();
+		if(clientBarriers != null)
+			clientBarriers.refreshVisibility();
+		String sideName = side.name().toLowerCase(Locale.ROOT);
+		msg(sender, "'" + b.name() + "' " + (on ? "connects " + sideName + " again." : "no longer auto-connects " + sideName + "."), NamedTextColor.GREEN);
+		if(store.getCustom(b) != null || store.getEdge(b) != null || !store.hasShapes(b))
+			msg(sender, "(It isn't a follow-shape barrier, so this has no effect on it.)", NamedTextColor.GRAY);
 	}
 
 	/** /block shapes <name> [on|off]: does this barrier copy bar/fence/pane/wall shapes into its air cells? */
@@ -1987,11 +2087,11 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 			return out;
 		if(args.length == 1)
 		{
-			for(String s : List.of("add", "addshape", "shapes", "why", "perf", "remove", "edit", "edge", "custom", "list", "tp", "show", "pick", "info", "off", "on", "debug", "shulkers", "clear", "reload"))
+			for(String s : List.of("add", "addshape", "shapes", "connect", "why", "perf", "remove", "edit", "edge", "custom", "list", "tp", "show", "pick", "info", "off", "on", "debug", "shulkers", "clear", "reload"))
 				if(s.startsWith(args[0].toLowerCase(Locale.ROOT)))
 					out.add(s);
 		}
-		else if(args.length == 2 && List.of("remove", "edit", "edge", "custom", "shapes", "show", "tp", "off", "on").contains(canonical(args[0])))
+		else if(args.length == 2 && List.of("remove", "edit", "edge", "custom", "shapes", "connect", "show", "tp", "off", "on").contains(canonical(args[0])))
 		{
 			// In a world with arena-instance copies, offer the barriers that exist where the player is standing.
 			List<Barrier> candidates = sender instanceof Player p ? store.allBarriersIn(p.getWorld().getName()) : store.all();
