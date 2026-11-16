@@ -120,6 +120,13 @@ final class MobBlocker implements Listener
 				fullForMobs.add(t.trim().toUpperCase(java.util.Locale.ROOT));
 		if(!plugin.getConfig().isSet("mob-full-blocks"))
 			fullForMobs.add("BARS");
+		java.util.Set<org.bukkit.Material> materials = java.util.EnumSet.noneOf(org.bukkit.Material.class);
+		for(org.bukkit.Material m : org.bukkit.Material.values())
+			for(String t : fullForMobs)
+				if(m.name().endsWith(t))
+					materials.add(m);
+		fullForMobMaterials = materials;
+		debugOn = plugin.getConfig().getBoolean("mob-debug", false);
 		noPlanWorlds = plugin.getConfig().isSet("no-route-planning-worlds")
 				? List.copyOf(plugin.getConfig().getStringList("no-route-planning-worlds")) : List.of("mz_instance_");
 
@@ -135,6 +142,9 @@ final class MobBlocker implements Listener
 		task = -1;
 		plans.clear();
 		failedUntil.clear();
+		lastSpot.clear();
+		lastHop.clear();
+		lastDebug.clear();
 	}
 
 	// ------------------------------------------------------------------ safety net
@@ -142,8 +152,21 @@ final class MobBlocker implements Listener
 	@EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
 	public void onMobMove(EntityMoveEvent event)
 	{
-		if(!event.hasChangedPosition())
+		if(!event.hasChangedPosition() || !store.hasBarriersIn(event.getEntity().getWorld().getName()))
 			return;
+		long t0 = System.nanoTime();
+		try
+		{
+			mobMove(event);
+		}
+		finally
+		{
+			Perf.add(Perf.MOB_MOVES, t0);
+		}
+	}
+
+	private void mobMove(EntityMoveEvent event)
+	{
 		LivingEntity entity = event.getEntity();
 		if(!(entity instanceof Mob mob))
 			return;
@@ -155,10 +178,6 @@ final class MobBlocker implements Listener
 		double dx = to.getX() - from.getX(), dy = to.getY() - from.getY(), dz = to.getZ() - from.getZ();
 		Location cur = mob.getLocation();
 		BoundingBox here = mob.getBoundingBox().shift(from.getX() - cur.getX(), from.getY() - cur.getY(), from.getZ() - cur.getZ());
-		// Mobs may not step onto the top of a barrier either (like a fence): standing on it, they would hover above it
-		// over thin air. So a move is blocked if the body goes in, or the feet end up just above it. A mob that is already
-		// on top (jumped or knocked there) may walk off.
-		boolean onTop = !store.intersects(world, here) && store.intersectsEmpty(world, feet(here));
 		// The whole space the move passes through, not just where it ends: a fast fall (or knockback) would otherwise skip
 		// straight past a thin barrier piece in one tick
 		if(!hits(world, swept(here, dx, dy, dz), here))
@@ -187,7 +206,8 @@ final class MobBlocker implements Listener
 		else
 			event.setCancelled(true);
 		BoundingBox moved = swept(here, dx, dy, dz);
-		debug(mob, "move " + (slide == null ? "stopped" : "cut short") + " by " + (store.nameAt(world, moved) != null ? "barrier " + store.nameAt(world, moved) : "a full-for-mobs block (iron bars...)")
+		if(debugOn)
+			debug(mob, "move " + (slide == null ? "stopped" : "cut short") + " by " + (store.nameAt(world, moved) != null ? "barrier " + store.nameAt(world, moved) : "a full-for-mobs block (iron bars...)")
 				+ (mob.getTarget() != null ? " (target " + mob.getTarget().getName() + ")" : "") + routeInfo(mob));
 		Vector v = mob.getVelocity();
 		// No jumping on against it either (a blocked jump would just bounce it up and down)
@@ -243,7 +263,8 @@ final class MobBlocker implements Listener
 		BoundingBox landing = mob.getBoundingBox().shift(dir.getX(), 1.25, dir.getZ());
 		if(solid(world, landing))
 		{
-			debug(mob, "jump cancelled: it would land in barrier " + store.nameAt(world, landing));
+			if(debugOn)
+				debug(mob, "jump cancelled: it would land in barrier " + store.nameAt(world, landing));
 			event.setCancelled(true);
 			if(plan == null)
 			{
@@ -258,16 +279,13 @@ final class MobBlocker implements Listener
 	/** Material-name endings of blocks that are a full block for mobs (config "mob-full-blocks"). */
 	private List<String> fullForMobs = List.of();
 
+	/** The materials whose name ends with one of {@link #fullForMobs}, worked out once in start(). */
+	private java.util.Set<org.bukkit.Material> fullForMobMaterials = java.util.EnumSet.noneOf(org.bukkit.Material.class);
+
 	/** Is the block's material one that counts as a full block for mobs? */
 	private boolean fullForMob(Block block)
 	{
-		if(fullForMobs.isEmpty())
-			return false;
-		String name = block.getType().name();
-		for(String t : fullForMobs)
-			if(name.endsWith(t))
-				return true;
-		return false;
+		return fullForMobMaterials.contains(block.getType());
 	}
 
 	/**
@@ -332,6 +350,8 @@ final class MobBlocker implements Listener
 		}
 	}
 	private final Map<UUID, Long> lastDebug = new HashMap<>();
+	/** config "mob-debug", read once in start() (its messages are only built when it is on). */
+	private boolean debugOn;
 
 	private String routeInfo(Mob mob)
 	{
@@ -347,7 +367,7 @@ final class MobBlocker implements Listener
 	/** With "mob-debug: true": why a mob was stopped, at most once a second per mob. */
 	private void debug(Mob mob, String what)
 	{
-		if(!plugin.getConfig().getBoolean("mob-debug", false))
+		if(!debugOn)
 			return;
 		long tick = Bukkit.getCurrentTick();
 		Long last = lastDebug.get(mob.getUniqueId());
@@ -380,7 +400,8 @@ final class MobBlocker implements Listener
 		if(solid(world, up) || solid(world, upAhead) || world.hasCollisionsIn(up) || world.hasCollisionsIn(upAhead))
 			return null;
 		lastHop.put(mob.getUniqueId(), tick);
-		debug(mob, "hops over barrier " + store.nameAt(world, ahead));
+		if(debugOn)
+			debug(mob, "hops over barrier " + store.nameAt(world, ahead));
 		if(lastHop.size() > 500)
 			lastHop.values().removeIf(t -> tick - t > 200);
 		return new Vector(nx * 0.22, 0.45, nz * 0.22);
@@ -413,6 +434,19 @@ final class MobBlocker implements Listener
 
 	private void tick()
 	{
+		long t0 = System.nanoTime();
+		try
+		{
+			tickInner();
+		}
+		finally
+		{
+			Perf.add(Perf.MOB_ROUTES, t0);
+		}
+	}
+
+	private void tickInner()
+	{
 		long tick = Bukkit.getCurrentTick();
 		for(World world : Bukkit.getWorlds())
 		{
@@ -434,8 +468,16 @@ final class MobBlocker implements Listener
 					considerPlanning(mob, tick);
 			}
 		}
-		plans.keySet().removeIf(id -> !(Bukkit.getEntity(id) instanceof Mob m) || !m.isValid());
-		failedUntil.values().removeIf(until -> until < tick);
+		// Once a second (looking each one up every tick was wasted work)
+		if(tick % 20 == 0)
+		{
+			plans.keySet().removeIf(id -> !(Bukkit.getEntity(id) instanceof Mob m) || !m.isValid());
+			failedUntil.values().removeIf(until -> until < tick);
+			lastHop.values().removeIf(t -> tick - t > 200);
+			lastDebug.values().removeIf(t -> tick - t > 200);
+			if(tick % 200 == 0)
+				lastSpot.keySet().removeIf(id -> !(Bukkit.getEntity(id) instanceof Mob m) || !m.isValid());
+		}
 	}
 
 	/** Where each mob was at its last stuck check: x, y, z, and how many checks in a row it barely moved. */
@@ -466,7 +508,8 @@ final class MobBlocker implements Listener
 		BoundingBox box = mob.getBoundingBox();
 		if(!store.near(mob.getWorld(), box.clone().expand(1.5)))
 			return false;
-		debug(mob, "stuck for " + still + "s next to barrier " + store.nameAt(mob.getWorld(), box.clone().expand(1.5)) + ": planning a way");
+		if(debugOn)
+			debug(mob, "stuck for " + still + "s next to barrier " + store.nameAt(mob.getWorld(), box.clone().expand(1.5)) + ": planning a way");
 		failedUntil.remove(mob.getUniqueId());
 		Plan old = plans.get(mob.getUniqueId());
 		if(old != null && !old.direct && old.full)

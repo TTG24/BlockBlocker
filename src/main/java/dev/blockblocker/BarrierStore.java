@@ -30,6 +30,56 @@ public class BarrierStore
 	private final File file;
 	private final Map<String, Barrier> barriers = new LinkedHashMap<>();
 	private Map<String, List<CachedBox>> byWorld = new HashMap<>();
+	/**
+	 * The same barriers by chunk (world -> chunk key -> barriers whose box reaches into that chunk). A query only looks at the
+	 * barriers of the chunks it touches, instead of every barrier in the world (each mob move asks several of these).
+	 */
+	private Map<String, Map<Long, List<CachedBox>>> byChunk = new HashMap<>();
+
+	private static long chunkKey(int cx, int cz)
+	{
+		return ((long) cx << 32) ^ (cz & 0xFFFFFFFFL);
+	}
+
+	/** The barriers whose box may overlap the given bounds (each once). */
+	private List<CachedBox> candidates(String world, double minX, double minZ, double maxX, double maxZ)
+	{
+		Map<Long, List<CachedBox>> chunks = byChunk.get(world);
+		if(chunks == null)
+			return NONE;
+		int cx0 = (int) Math.floor(minX) >> 4, cx1 = (int) Math.floor(maxX) >> 4;
+		int cz0 = (int) Math.floor(minZ) >> 4, cz1 = (int) Math.floor(maxZ) >> 4;
+		if(cx0 == cx1 && cz0 == cz1)
+			return chunks.getOrDefault(chunkKey(cx0, cz0), NONE);
+		List<CachedBox> out = null;
+		java.util.Set<CachedBox> seen = null;
+		for(int cx = cx0; cx <= cx1; cx++)
+			for(int cz = cz0; cz <= cz1; cz++)
+			{
+				List<CachedBox> list = chunks.get(chunkKey(cx, cz));
+				if(list == null)
+					continue;
+				if(out == null)
+				{
+					out = new ArrayList<>();
+					seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+				}
+				for(CachedBox c : list)
+					if(seen.add(c))
+						out.add(c);
+			}
+		return out == null ? NONE : out;
+	}
+
+	private List<CachedBox> candidates(String world, BoundingBox box)
+	{
+		return candidates(world, box.getMinX(), box.getMinZ(), box.getMaxX(), box.getMaxZ());
+	}
+
+	private List<CachedBox> candidates(String world, org.bukkit.util.Vector a, org.bukkit.util.Vector b)
+	{
+		return candidates(world, Math.min(a.getX(), b.getX()), Math.min(a.getZ(), b.getZ()), Math.max(a.getX(), b.getX()), Math.max(a.getZ(), b.getZ()));
+	}
 
 	public BarrierStore(File file)
 	{
@@ -129,8 +179,17 @@ public class BarrierStore
 		yaml.save(file);
 	}
 
+	/** Goes up whenever the set of barriers (or one of them) changes, so callers can tell their cached results are stale. */
+	private int version;
+
+	public int version()
+	{
+		return version;
+	}
+
 	private void reindex()
 	{
+		version++;
 		Map<String, List<CachedBox>> index = new HashMap<>();
 		for(Barrier b : barriers.values())
 			if(!isDisabled(b))
@@ -140,6 +199,23 @@ public class BarrierStore
 				if(!isDisabled(b))
 					index.computeIfAbsent(b.world(), k -> new ArrayList<>()).add(new CachedBox(b, b.box()));
 		byWorld = index;
+		Map<String, Map<Long, List<CachedBox>>> chunks = new HashMap<>();
+		for(Map.Entry<String, List<CachedBox>> e : index.entrySet())
+		{
+			Map<Long, List<CachedBox>> perWorld = new HashMap<>();
+			for(CachedBox c : e.getValue())
+			{
+				BoundingBox b = c.box();
+				// (a little margin: queries just touching a box's edge still find it)
+				int cx0 = (int) Math.floor(b.getMinX() - 0.01) >> 4, cx1 = (int) Math.floor(b.getMaxX() + 0.01) >> 4;
+				int cz0 = (int) Math.floor(b.getMinZ() - 0.01) >> 4, cz1 = (int) Math.floor(b.getMaxZ() + 0.01) >> 4;
+				for(int cx = cx0; cx <= cx1; cx++)
+					for(int cz = cz0; cz <= cz1; cz++)
+						perWorld.computeIfAbsent(chunkKey(cx, cz), k -> new ArrayList<>()).add(c);
+			}
+			chunks.put(e.getKey(), perWorld);
+		}
+		byChunk = chunks;
 	}
 
 	/** Barriers switched off at runtime ("world/name"). Never saved: they come back on restart or /block reload. */
@@ -211,6 +287,16 @@ public class BarrierStore
 	 */
 	public int copyWorld(String fromWorld, String toWorld)
 	{
+		// The shape settings of the earlier copy go first: a barrier that lost its edge or custom shape (or was removed) since
+		// then used to keep the old one in the copy
+		Map<String, Barrier> earlier = temporary.get(toWorld);
+		if(earlier != null)
+			for(String name : earlier.keySet())
+			{
+				edges.remove(key(toWorld, name));
+				customs.remove(key(toWorld, name));
+				noShapes.remove(key(toWorld, name));
+			}
 		Map<String, Barrier> copies = new LinkedHashMap<>();
 		for(Barrier b : barriers.values())
 			if(b.world().equals(fromWorld))
@@ -278,6 +364,16 @@ public class BarrierStore
 	public boolean isEmpty()
 	{
 		return barriers.isEmpty();
+	}
+
+	/**
+	 * Is the name used by a saved barrier in another world? Saved barriers share one list of names, so creating one with that
+	 * name here would silently replace (delete) the other world's barrier.
+	 */
+	public boolean nameTakenElsewhere(String name, String world)
+	{
+		Barrier other = barriers.get(name);
+		return other != null && !other.world().equals(world);
 	}
 
 	public void add(Barrier barrier)
@@ -379,6 +475,7 @@ public class BarrierStore
 
 	public void setShapes(Barrier b, boolean on)
 	{
+		version++; // players near it get its new shape at once
 		if(on)
 			noShapes.remove(key(b.world(), b.name()));
 		else
@@ -490,6 +587,7 @@ public class BarrierStore
 	/** Makes a barrier an edge barrier (a thin plate on that side of each cell), or a normal one again with null. */
 	public void setEdge(Barrier b, BlockFace face)
 	{
+		version++; // players near it get its new shape at once
 		if(face == null)
 			edges.remove(key(b.world(), b.name()));
 		else
@@ -521,6 +619,7 @@ public class BarrierStore
 	/** Makes a barrier a custom one made of these boxes (an empty list is allowed), or a normal one again with null. */
 	public void setCustom(Barrier b, List<double[]> boxes)
 	{
+		version++; // players near it get its new shape at once
 		if(boxes == null)
 			customs.remove(key(b.world(), b.name()));
 		else
@@ -781,7 +880,7 @@ public class BarrierStore
 	 */
 	public boolean intersects(World world, BoundingBox box)
 	{
-		for(CachedBox c : byWorld.getOrDefault(world.getName(), NONE))
+		for(CachedBox c : candidates(world.getName(), box))
 		{
 			if(!c.box().overlaps(box))
 				continue;
@@ -814,7 +913,7 @@ public class BarrierStore
 	/** Name of a barrier overlapping the box (for debug messages), or null. */
 	public String nameAt(World world, BoundingBox box)
 	{
-		for(CachedBox c : byWorld.getOrDefault(world.getName(), NONE))
+		for(CachedBox c : candidates(world.getName(), box))
 		{
 			if(!c.box().overlaps(box))
 				continue;
@@ -842,7 +941,7 @@ public class BarrierStore
 
 	public boolean intersectsEmpty(World world, BoundingBox box)
 	{
-		for(CachedBox c : byWorld.getOrDefault(world.getName(), NONE))
+		for(CachedBox c : candidates(world.getName(), box))
 		{
 			if(!c.box().overlaps(box))
 				continue;
@@ -877,7 +976,7 @@ public class BarrierStore
 	{
 		if(thinBlocks.isEmpty())
 			return null;
-		for(CachedBox c : byWorld.getOrDefault(world.getName(), NONE))
+		for(CachedBox c : candidates(world.getName(), box))
 		{
 			if(!c.box().overlaps(box))
 				continue;
@@ -1204,7 +1303,7 @@ public class BarrierStore
 	/** Is any barrier's bounding box overlapping this box? A cheap first check before the exact ones. */
 	public boolean near(World world, BoundingBox box)
 	{
-		for(CachedBox c : byWorld.getOrDefault(world.getName(), NONE))
+		for(CachedBox c : candidates(world.getName(), box))
 			if(c.box().overlaps(box))
 				return true;
 		return false;
@@ -1232,12 +1331,17 @@ public class BarrierStore
 		if(len < 1.0E-6)
 			return false;
 		dir.multiply(1.0 / len);
-		for(CachedBox c : byWorld.getOrDefault(world.getName(), NONE))
+		java.util.Set<Long> seen = null;
+		for(CachedBox c : candidates(world.getName(), a, b))
 		{
 			if(!nearSegment(c.box(), a, b) || !c.box().contains(a) && c.box().rayTrace(a, dir, len) == null)
 				continue;
 			Barrier barrier = c.barrier();
-			java.util.Set<Long> seen = new java.util.HashSet<>();
+			// One set for the whole call, emptied per barrier (it used to be a new one for every barrier)
+			if(seen == null)
+				seen = new java.util.HashSet<>();
+			else
+				seen.clear();
 			for(double t = 0; t <= len + 0.05; t += 0.1)
 			{
 				double d = Math.min(t, len);
@@ -1252,6 +1356,23 @@ public class BarrierStore
 		return false;
 	}
 
+	/** Does the segment from a (direction dir, length len) go through the exact boxes of this barrier's cells? */
+	private boolean exactHit(World world, Barrier barrier, org.bukkit.util.Vector a, org.bukkit.util.Vector dir, double len)
+	{
+		java.util.Set<Long> seen = new java.util.HashSet<>();
+		for(double t = 0; t <= len + 0.05; t += 0.1)
+		{
+			double d = Math.min(t, len);
+			int x = (int) Math.floor(a.getX() + dir.getX() * d), y = (int) Math.floor(a.getY() + dir.getY() * d), z = (int) Math.floor(a.getZ() + dir.getZ() * d);
+			if(!seen.add(((long) x & 0x3FFFFFF) << 38 | ((long) z & 0x3FFFFFF) << 12 | (y & 0xFFF)) || !barrier.contains(x, y, z))
+				continue;
+			for(BoundingBox cell : cellBoxes(world, barrier, x, y, z))
+				if(cell.contains(a) || cell.rayTrace(a, dir, len) != null)
+					return true;
+		}
+		return false;
+	}
+
 	/** True if the straight segment a -> b passes through any barrier in the world. */
 	public boolean segmentCrosses(String world, org.bukkit.util.Vector a, org.bukkit.util.Vector b)
 	{
@@ -1260,10 +1381,19 @@ public class BarrierStore
 		if(len < 1.0E-6)
 			return false;
 		dir.multiply(1.0 / len);
-		for(CachedBox c : byWorld.getOrDefault(world, NONE))
+		for(CachedBox c : candidates(world, a, b))
 		{
 			if(!nearSegment(c.box(), a, b) || !c.box().contains(a) && c.box().rayTrace(a, dir, len) == null)
 				continue;
+			// An edge or custom barrier is only a thin plate / exact boxes inside its cells: only a segment that really goes
+			// through them counts (its whole box used to count, so mobs aimed short near such barriers and walked jerkily)
+			if(getEdge(c.barrier()) != null || getCustom(c.barrier()) != null)
+			{
+				World w = org.bukkit.Bukkit.getWorld(world);
+				if(w != null && exactHit(w, c.barrier(), a, dir, len))
+					return true;
+				continue;
+			}
 			if(!c.barrier().isShaped())
 				return true;
 			// Shaped barrier: the box is only a broad phase, so walk the segment and test real cells.

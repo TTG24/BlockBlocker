@@ -48,6 +48,9 @@ import java.util.regex.Pattern;
 
 public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 {
+	/** config "grim-ignore-near-shulkers", for the Grim hook (read on Grim's thread, so not from the config). */
+	private volatile boolean grimIgnoreNear = true;
+
 	private static final Pattern NAME = Pattern.compile("[A-Za-z0-9_-]{1,32}");
 	private static final String PERM = "blockblocker.admin";
 
@@ -94,7 +97,10 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 		if(mobBlocker != null)
 			mobBlocker.stop();
 		if(customEditor != null)
+		{
+			customEditor.flushSave();
 			customEditor.clearLines();
+		}
 		if(clientBarriers != null)
 			clientBarriers.shutdown();
 		if(collidersWanted)
@@ -124,12 +130,15 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 		getServer().getPluginManager().registerEvents(this, this);
 		clientBarriers = new ClientBarriers(this, store, colliders, () -> mzBridge);
 		clientBarriers.start();
+		getServer().getScheduler().runTaskTimer(this, this::refreshPickHolders, 5L, 5L);
 		if(colliders && getServer().getPluginManager().isPluginEnabled("GrimAC") && getConfig().getBoolean("grim-ignore-near-shulkers", true))
 		{
 			try
 			{
 				ClientBarriers cb = clientBarriers;
-				GrimHook.register(this, id -> getConfig().getBoolean("grim-ignore-near-shulkers", true) && cb.isNearCollider(id));
+				grimIgnoreNear = getConfig().getBoolean("grim-ignore-near-shulkers", true);
+				// (Grim calls this on its packet thread: it reads a field set on the main thread, not the config itself)
+				GrimHook.register(this, id -> grimIgnoreNear && cb.isNearCollider(id));
 				getLogger().info("Hooked GrimAC: its movement flags are ignored right next to BlockBlocker's invisible shulkers.");
 			}
 			catch(Throwable t)
@@ -501,6 +510,12 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 			case "on" -> switchBarrier(sender, args, false);
 			case "clear" ->
 			{
+				// Deletes every saved barrier in every world: only with "confirm"
+				if(args.length < 2 || !args[1].equalsIgnoreCase("confirm"))
+				{
+					msg(sender, "This deletes ALL " + store.all().size() + " saved barrier(s) in every world. Type /block clear confirm to do it.", NamedTextColor.RED);
+					return true;
+				}
 				int n = store.clear();
 				saveStore();
 				msg(sender, "Removed " + n + " barrier(s).", NamedTextColor.GREEN);
@@ -508,6 +523,7 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 			case "reload" ->
 			{
 				reloadConfig();
+				grimIgnoreNear = getConfig().getBoolean("grim-ignore-near-shulkers", true);
 				List<String> addedKeys = mergeDefaultConfig();
 				respectPartial = !collidersWanted && getConfig().getBoolean("respect-partial-blocks", true);
 				store.setRespectPartial(respectPartial);
@@ -518,6 +534,9 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 		store.setConnectShapes(getConfig().getBoolean("connect-shapes", true));
 		store.setCopyPartial(getConfig().getBoolean("shape-copy-partial-blocks", true));
 		loadPickItem();
+				// An editor change from the last second is written first (the load would otherwise throw it away)
+				if(customEditor != null)
+					customEditor.flushSave();
 				store.load();
 				refreshMzBridge();
 				offTasks.values().forEach(BukkitTask::cancel);
@@ -571,10 +590,26 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 		return expires != null && expires >= System.currentTimeMillis();
 	}
 
+	/**
+	 * Admins holding the pick item right now, refreshed on the main thread every 5 ticks. The packet listener (network thread)
+	 * only reads this set: it used to check permissions and read the inventory off the main thread on every placement packet.
+	 */
+	private final java.util.Set<UUID> pickHolders = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+	private void refreshPickHolders()
+	{
+		java.util.Set<UUID> now = new java.util.HashSet<>();
+		for(Player p : getServer().getOnlinePlayers())
+			if(holdsPickItem(p))
+				now.add(p.getUniqueId());
+		pickHolders.retainAll(now);
+		pickHolders.addAll(now);
+	}
+
 	/** Called from the network thread by the packet listener: hand the work back to the main thread. */
 	private boolean consumePickFromPacket(Player player)
 	{
-		if(holdsPickItem(player))
+		if(pickHolders.contains(player.getUniqueId()) && (customEditor == null || !customEditor.isEditing(player.getUniqueId())))
 		{
 			// (sneaking: swap the barrier between normal and follow-shape blocking instead of just reporting it)
 			if(firstItemPick(player))
@@ -687,7 +722,11 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 		if(last != null && now - last < 200)
 			return; // one click can arrive as several packets
 		Location eye = player.getEyeLocation();
-		RayTraceResult hit = player.getWorld().rayTraceBlocks(eye, eye.getDirection(), 5.0, FluidCollisionMode.NEVER, false);
+		// The player's own reach (4.5 in survival), not a flat 5 blocks: a click passed through may not reach further than a
+		// normal click could
+		var reachAttr = player.getAttribute(org.bukkit.attribute.Attribute.BLOCK_INTERACTION_RANGE);
+		double reach = reachAttr != null ? reachAttr.getValue() : 4.5;
+		RayTraceResult hit = player.getWorld().rayTraceBlocks(eye, eye.getDirection(), reach, FluidCollisionMode.NEVER, false);
 		if(hit == null || hit.getHitBlock() == null)
 			return;
 		lastRelay.put(player.getUniqueId(), now);
@@ -1335,6 +1374,11 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 		else
 			name = store.nextAutoName();
 
+		if(store.nameTakenElsewhere(name, player.getWorld().getName()))
+		{
+			msg(sender, "There is already a barrier named '" + name + "' in world " + store.get(name).world() + ". Pick another name.", NamedTextColor.RED);
+			return;
+		}
 		boolean replaced = store.has(name);
 		Barrier barrier = new Barrier(name, player.getWorld().getName(), sel.minX(), sel.minY(), sel.minZ(), sel.maxX(), sel.maxY(), sel.maxZ(), sel.footprint(), sel.volume());
 		store.add(barrier);
@@ -1518,6 +1562,11 @@ public class BlockBlocker extends JavaPlugin implements TabExecutor, Listener
 		int cx = cell[0], cy = cell[1], cz = cell[2];
 		String from = cell[3] == 1 ? "your selection" : "the block you stand in";
 		double[] box = {cx + v[0], cy + v[1], cz + v[2], cx + v[0] + v[3], cy + v[1] + v[4], cz + v[2] + v[5]};
+		if(store.nameTakenElsewhere(name, player.getWorld().getName()))
+		{
+			msg(sender, "There is already a barrier named '" + name + "' in world " + store.get(name).world() + ". Pick another name.", NamedTextColor.RED);
+			return;
+		}
 		boolean replaced = store.has(name);
 		Barrier b = new Barrier(name, player.getWorld().getName(), (int) Math.floor(box[0]), (int) Math.floor(box[1]), (int) Math.floor(box[2]),
 				(int) Math.ceil(box[3]) - 1, (int) Math.ceil(box[4]) - 1, (int) Math.ceil(box[5]) - 1);

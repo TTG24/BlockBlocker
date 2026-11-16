@@ -14,6 +14,8 @@ final class Perf
 	static final String MOVE = "move checks (server push-back)";
 	static final String EDITOR = "custom editor particles";
 	static final String OUTLINES = "/block show outlines";
+	static final String MOB_MOVES = "mob move checks (every mob step near barriers)";
+	static final String MOB_ROUTES = "mob route planning (every tick)";
 
 	private static final class Section
 	{
@@ -30,7 +32,7 @@ final class Perf
 
 	static
 	{
-		for(String s : new String[] {CLIENT, MOVE, EDITOR, OUTLINES})
+		for(String s : new String[] {CLIENT, MOVE, EDITOR, OUTLINES, MOB_MOVES, MOB_ROUTES})
 			SECTIONS.put(s, new Section());
 	}
 

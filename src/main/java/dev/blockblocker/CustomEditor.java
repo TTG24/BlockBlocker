@@ -100,7 +100,8 @@ final class CustomEditor implements Listener
 	private final BarrierStore store;
 	private final Runnable save;
 	private final Supplier<ClientBarriers> client;
-	private final Map<UUID, Session> sessions = new HashMap<>();
+	// Read from network and chat threads too: thread-safe
+	private final Map<UUID, Session> sessions = new ConcurrentHashMap<>();
 	/** When each player last clicked one of the cubes directly. Written from the network thread. */
 	private final Map<UUID, Long> entityClicks = new ConcurrentHashMap<>();
 
@@ -108,8 +109,29 @@ final class CustomEditor implements Listener
 	{
 		this.plugin = plugin;
 		this.store = store;
-		this.save = save;
+		// Clicks come fast while editing: the barrier file is written once, a second after the last change, instead of on
+		// every click (each save writes the whole file)
+		this.saveNow = save;
+		this.save = () ->
+		{
+			if(savePending)
+				return;
+			savePending = true;
+			Bukkit.getScheduler().runTaskLater(plugin, this::flushSave, 20L);
+		};
 		this.client = client;
+	}
+
+	private final Runnable saveNow;
+	private boolean savePending;
+
+	/** Writes a pending save now (also on plugin stop, so no edit is lost). */
+	void flushSave()
+	{
+		if(!savePending)
+			return;
+		savePending = false;
+		saveNow.run();
 	}
 
 	void start()
@@ -133,6 +155,13 @@ final class CustomEditor implements Listener
 	{
 		String world = player.getWorld().getName();
 		Barrier b = store.find(world, name);
+		if(b == null && store.nameTakenElsewhere(name, world))
+		{
+			// Making it here would replace (delete) the other world's barrier of that name
+			player.sendMessage(net.kyori.adventure.text.Component.text("There is already a barrier named '" + name + "' in world "
+					+ store.get(name).world() + ". Pick another name.", net.kyori.adventure.text.format.NamedTextColor.RED));
+			return;
+		}
 		List<double[]> original = b == null ? null : store.getCustom(b);
 		if(b != null && original == null)
 		{
@@ -324,7 +353,7 @@ final class CustomEditor implements Listener
 	@EventHandler(priority = EventPriority.LOWEST)
 	public void onInteract(PlayerInteractEvent event)
 	{
-		if(!isEditing(event.getPlayer().getUniqueId()))
+		if(!editingHere(event.getPlayer()))
 			return;
 		event.setCancelled(true);
 		if(event.getHand() != EquipmentSlot.HAND)
@@ -337,8 +366,19 @@ final class CustomEditor implements Listener
 	@EventHandler(priority = EventPriority.LOWEST)
 	public void onBreak(BlockBreakEvent event)
 	{
-		if(isEditing(event.getPlayer().getUniqueId()))
+		if(editingHere(event.getPlayer()))
 			event.setCancelled(true);
+	}
+
+	/**
+	 * Editing, and near the area being edited (same world, within 32 blocks): only then are clicks and block breaking taken
+	 * by the editor. They used to be blocked everywhere, in every world, for as long as the session lasted.
+	 */
+	private boolean editingHere(Player player)
+	{
+		Session s = sessions.get(player.getUniqueId());
+		return s != null && player.getWorld().getName().equals(s.world)
+				&& s.area().clone().expand(32).contains(player.getLocation().toVector());
 	}
 
 	/**

@@ -95,6 +95,30 @@ public class ClientBarriers implements Listener
 	private BlockData barrier;
 	private int counter;
 
+	/** The last list worked out for a player, reused while they stay in the same block (see wantedCached). */
+	private record CachedWanted(String world, int x, int y, int z, int version, int run, Wanted wanted) {}
+	private final Map<UUID, CachedWanted> wantedCache = new HashMap<>();
+
+	/**
+	 * What a player needs, worked out again only when they moved to another block, the barriers changed, or 5 runs (10 ticks)
+	 * went by (real blocks around can change too, MZ barriers break). Positions are compared on a quarter-block grid. It used to be worked out every run for every player,
+	 * standing still or not.
+	 */
+	private Wanted wantedCached(Player p)
+	{
+		Location l = p.getLocation();
+		String world = p.getWorld().getName();
+		// A quarter-block grid, not whole blocks: which wall pieces are left out depends on where the body is in the block
+		int qx = (int) Math.floor(l.getX() * 4), qy = (int) Math.floor(l.getY() * 4), qz = (int) Math.floor(l.getZ() * 4);
+		CachedWanted c = wantedCache.get(p.getUniqueId());
+		if(c != null && c.world().equals(world) && c.x() == qx && c.y() == qy && c.z() == qz
+				&& c.version() == store.version() && counter - c.run() < 5)
+			return c.wanted();
+		Wanted w = wanted(p);
+		wantedCache.put(p.getUniqueId(), new CachedWanted(world, qx, qy, qz, store.version(), counter, w));
+		return w;
+	}
+
 	public ClientBarriers(JavaPlugin plugin, BarrierStore store, boolean useColliders, Supplier<MzBridge> mz)
 	{
 		this.plugin = plugin;
@@ -220,6 +244,11 @@ public class ClientBarriers implements Listener
 			return;
 		destroyColliders(p, st.colliders.values());
 		st.colliders.clear();
+		// The client reloads the chunks, which wipes the fake blocks too: send them again on the next run (they used to come
+		// back only with the next timed resend, up to a second later, and the player could walk into the barrier meanwhile)
+		st.sent.clear();
+		st.fakeSent.clear();
+		wantedCache.remove(p.getUniqueId());
 	}
 
 	/** /block shulkers: apply the new visibility to every shulker already shown, without re-spawning any. */
@@ -242,6 +271,8 @@ public class ClientBarriers implements Listener
 		active.remove(event.getPlayer().getUniqueId());
 		lastSafe.remove(event.getPlayer().getUniqueId());
 		capWarned.remove(event.getPlayer().getUniqueId());
+		nearColliders.remove(event.getPlayer().getUniqueId());
+		wantedCache.remove(event.getPlayer().getUniqueId());
 		State st = states.remove(event.getPlayer().getUniqueId());
 		if(st != null)
 			st.colliders.values().forEach(this::forgetIds);
@@ -313,7 +344,7 @@ public class ClientBarriers implements Listener
 		for(Player p : Bukkit.getOnlinePlayers())
 		{
 			State st = states.get(p.getUniqueId());
-			Wanted wanted = enabled ? wanted(p) : new Wanted(Set.of(), Map.of(), Set.of());
+			Wanted wanted = enabled ? wantedCached(p) : new Wanted(Set.of(), Map.of(), Set.of());
 			if(st == null)
 			{
 				if(wanted.air().isEmpty() && wanted.fake().isEmpty() && wanted.colliders().isEmpty())
@@ -420,6 +451,10 @@ public class ClientBarriers implements Listener
 
 	private void restore(Player p, Pos pos)
 	{
+		// Not in a loaded chunk (left behind after a teleport): the client gets the real block with the chunk anyway, and
+		// reading it here would load the chunk on the main thread
+		if(!p.getWorld().isChunkLoaded(pos.x() >> 4, pos.z() >> 4))
+			return;
 		Location loc = new Location(p.getWorld(), pos.x(), pos.y(), pos.z());
 		p.sendBlockChange(loc, loc.getBlock().getBlockData());
 	}
