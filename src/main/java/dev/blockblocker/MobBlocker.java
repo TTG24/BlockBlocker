@@ -185,6 +185,11 @@ final class MobBlocker implements Listener
 		// Already inside one (spawned or pushed in): let it walk out
 		if(solid(world, here, here))
 			return;
+		if(planningOff(world))
+		{
+			wallMove(event, mob, world, from, to, here, dx, dy, dz);
+			return;
+		}
 
 		Location slide = null;
 		// Keep whatever part of the move is free: along x, along z, and the vertical part only if that is free too
@@ -199,7 +204,10 @@ final class MobBlocker implements Listener
 			slide = new Location(world, from.getX() + dx, from.getY() + ky, from.getZ(), to.getYaw(), to.getPitch());
 		else if(!hits(world, swept(here, 0, ky, dz), here) && dz != 0)
 			slide = new Location(world, from.getX(), from.getY() + ky, from.getZ() + dz, to.getYaw(), to.getPitch());
-		else if(yFree && dy != 0)
+		// Only the vertical part left: fine for a fall or a jump, but not for a step up onto a stair or slab (Minecraft
+		// lifts a walking mob up to 0.6 as part of a step forward). Without its step forward that lift left the mob
+		// standing in mid-air beside the stair; it then dropped back and tried again, over and over.
+		else if(yFree && dy != 0 && !(dy > 0 && dy <= 0.6 && mob.isOnGround()))
 			slide = new Location(world, from.getX(), from.getY() + dy, from.getZ(), to.getYaw(), to.getPitch());
 		if(slide != null)
 			event.setTo(slide);
@@ -379,6 +387,75 @@ final class MobBlocker implements Listener
 		Location l = mob.getLocation();
 		plugin.getLogger().info(String.format("[mob %s @ %.2f %.2f %.2f%s] %s", mob.getType().name().toLowerCase(java.util.Locale.ROOT),
 				l.getX(), l.getY(), l.getZ(), plans.containsKey(mob.getUniqueId()) ? ", on planned route" : "", what));
+	}
+
+	/**
+	 * Worlds where another plugin plans the routes (MinecraftZombies' arenas): a barrier is exactly like a stone block and
+	 * nothing more. The move is clipped against barriers the way Minecraft clips it against blocks (up/down first, then
+	 * along x, then z); coming down onto a barrier's top is standing on the ground, so a mob can stand and jump there.
+	 * No hops, nudges or steering: where to go, and when to jump, is up to the planner.
+	 */
+	private void wallMove(EntityMoveEvent event, Mob mob, World world, Location from, Location to, BoundingBox here, double dx,
+			double dy, double dz)
+	{
+		double[] move = clip(world, here, dx, dy, dz);
+		// A step up onto a stair or slab (Minecraft lifts a walking mob up to 0.6 as part of a step forward) that a barrier
+		// keeps from going forward: taken without its lift, so it never ends up standing in the air beside the step
+		if(dy > 0 && dy <= 0.6 && mob.isOnGround())
+		{
+			double[] flat = clip(world, here, dx, 0, dz);
+			if(flat[0] * flat[0] + flat[2] * flat[2] >= move[0] * move[0] + move[2] * move[2] - 1.0E-6)
+				move = flat;
+		}
+		event.setTo(new Location(world, from.getX() + move[0], from.getY() + move[1], from.getZ() + move[2], to.getYaw(),
+				to.getPitch()));
+		Vector v = mob.getVelocity();
+		double vx = move[0] != dx ? 0 : v.getX(), vy = v.getY(), vz = move[2] != dz ? 0 : v.getZ();
+		if(move[1] != dy)
+		{
+			vy = 0;
+			if(dy < 0)
+			{
+				// Landed on a barrier's top: on the ground, as on a block
+				mob.setFallDistance(0);
+				markOnGround(mob);
+			}
+		}
+		mob.setVelocity(new Vector(vx, vy, vz));
+		if(debugOn)
+			debug(mob, "move clipped by barrier " + store.nameAt(world, swept(here, dx, dy, dz)) + " (wall mode)");
+	}
+
+	/** The part of a move (dx, dy, dz) a box can make before touching a barrier: y first, then x, then z, like Minecraft. */
+	private double[] clip(World world, BoundingBox here, double dx, double dy, double dz)
+	{
+		BoundingBox box = here.clone();
+		double cy = clipAxis(world, box, 0, dy, 0, here);
+		box.shift(0, cy, 0);
+		double cx = clipAxis(world, box, dx, 0, 0, here);
+		box.shift(cx, 0, 0);
+		double cz = clipAxis(world, box, 0, 0, dz, here);
+		return new double[] {cx, cy, cz};
+	}
+
+	/** How much of a move along one axis is free (the box swept along it touches no barrier). */
+	private double clipAxis(World world, BoundingBox box, double mx, double my, double mz, BoundingBox here)
+	{
+		if(mx == 0 && my == 0 && mz == 0)
+			return 0;
+		double whole = mx + my + mz;
+		if(!hits(world, swept(box, mx, my, mz), here))
+			return whole;
+		double lo = 0, hi = 1;
+		for(int i = 0; i < 12; i++)
+		{
+			double mid = (lo + hi) / 2;
+			if(hits(world, swept(box, mx * mid, my * mid, mz * mid), here))
+				hi = mid;
+			else
+				lo = mid;
+		}
+		return whole * lo;
 	}
 
 	/** A jump over a low barrier right ahead (see onMobMove), or null when there is none to hop. */
