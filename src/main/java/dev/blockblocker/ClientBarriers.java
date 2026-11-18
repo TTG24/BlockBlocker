@@ -344,7 +344,10 @@ public class ClientBarriers implements Listener
 		for(Player p : Bukkit.getOnlinePlayers())
 		{
 			State st = states.get(p.getUniqueId());
-			Wanted wanted = enabled ? wantedCached(p) : new Wanted(Set.of(), Map.of(), Set.of());
+			// Spectators fly through everything anyway, and would see the invisible shulkers: they get nothing (and lose what
+			// they had when they switch to spectator)
+			Wanted wanted = enabled && p.getGameMode() != org.bukkit.GameMode.SPECTATOR ? wantedCached(p)
+					: new Wanted(Set.of(), Map.of(), Set.of());
 			if(st == null)
 			{
 				if(wanted.air().isEmpty() && wanted.fake().isEmpty() && wanted.colliders().isEmpty())
