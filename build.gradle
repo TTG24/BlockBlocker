@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'dev.blockblocker'
-version = '1.0.0'
+version = '1.1.0'
 
 base.archivesName.set('BlockBlocker')
 
@@ -19,6 +19,7 @@ repositories {
     maven { url 'https://repo.papermc.io/repository/maven-public/' }
     maven { url 'https://repo.enginehub.org/repo/' }
     maven { url 'https://repo.codemc.io/repository/maven-releases/' }
+    maven { url 'https://repo.grim.ac/snapshots' }
 }
 
 dependencies {
@@ -35,7 +36,7 @@ dependencies {
     // already provides a class, the server's copy is loaded first, so duplicates are harmless.
     implementation 'com.github.retrooper:packetevents-spigot:2.14.0'
     // GrimAC API (optional at runtime): ignore Grim movement flags right next to our client-side shulkers.
-    compileOnly files('libs/grim-api.jar')
+    compileOnly 'ac.grim.grimac:GrimAPI:1.6.0.13'
 }
 
 // Only the shaded jar (with PacketEvents bundled) is useful; skip the "-plain" one.
