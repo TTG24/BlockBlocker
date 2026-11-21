@@ -87,7 +87,7 @@ Make your selection first (`//pos1`, `//pos2`, `//wand`, `//sel poly`, `//sel cy
 | `push-strength` | `0.5` | How hard `push` shoves, in blocks per tick. |
 | `block-fill-cell` | `false` | In `block` mode, air cells above bars/fences/panes/walls are a plain solid cell, so there is no gap above them anywhere. `false` = copy the thin shape with tiny shulkers, which leaves the same gaps the real blocks have. |
 | `push-fill-cell` | `false` | In `push` mode, the whole cell above the bars pushes players out, so there is no gap between the thin pieces to stand in. `false` = only the thin shape pushes. |
-| `mz-barriers` | `false` | Give the **MinecraftZombies** zombie-window barriers the same client-side collision: fake barrier blocks where a broken barrier is now empty, and (with `shulker-colliders`) invisible shulkers on non-full barrier blocks. MZ keeps blocking players on the server itself; this only removes the pulled-back rubber-banding. Applies only to players in an MZ game, in that game's world. Needs the MinecraftZombies plugin; `/block reload` applies a change. |
+| `mz-barriers` | `false` | Give the **[MinecraftZombies](https://github.com/TTG24/MZ-Minecraft-Zombies)** zombie-window barriers the same client-side collision: fake barrier blocks where a broken barrier is now empty, and (with `shulker-colliders`) invisible shulkers on non-full barrier blocks. MZ keeps blocking players on the server itself; this only removes the pulled-back rubber-banding. Applies only to players in an MZ game, in that game's world. Needs the MinecraftZombies plugin; `/block reload` applies a change. |
 | `attack-through` | `true` | A fake barrier block or shulker can swallow a sword swing aimed at a creature behind it (such as through an empty window). With this on, that swing is passed on to the creature really in the player's line of sight, within their normal reach and never at players, as a normal attack. Blocks standing inside a barrier cell (boards, half blocks, fences, bars, barrier blocks) never protect the creature; ordinary blocks elsewhere still do. Needs `shulker-colliders: true`. |
 | `attack-through-full-blocks` | `true` | Whether full solid blocks inside a barrier cell (e.g. whole planks) are also passed through. Set `false` to let only non-full blocks through. |
 | `click-through` | `true` | When a player right-clicks one of the invisible barriers instead of the real block behind it (for example a sign that buys a gun), pass the click through to that real block so plugins react as if it had been clicked directly. Needs `shulker-colliders: true`. Only plugin reactions are passed on; vanilla actions like opening a chest are not. |
@@ -153,3 +153,8 @@ The built jar also bundles **PacketEvents**, which is licensed under **GPL-3.0**
 - Author: [TTG24](https://github.com/TTG24)
 - [PacketEvents](https://github.com/retrooper/packetevents) by retrooper and contributors, used for the optional client-side shulker colliders.
 - [Adventure](https://github.com/KyoriPowered/adventure) by KyoriPowered, a PacketEvents dependency.
+
+## Related projects
+
+- [MZ-Minecraft-Zombies](https://github.com/TTG24/MZ-Minecraft-Zombies): the MinecraftZombies server plugin (round-based zombie arenas).
+- [MZ-Movement](https://github.com/TTG24/MZ-Movement): the Fabric client mod (tactical movement, zombie animations, crawlers, gore).
